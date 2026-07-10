@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLR Suspension Builder</title>
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <div id="scene"></div>
+    <div class="badge">
+      <div class="t">CLR SUSPENSION <b>BUILDER</b></div>
+      <div class="s" id="sub">built from parts · alignment is solved, not typed</div>
+    </div>
+    <div id="hud">
+      <h4>Static (at ride, sliders 0)</h4>
+      <div class="row"><span class="k">Camber °</span><span class="splitv"><span class="v L" id="sCambL">0</span><span class="v R" id="sCambR">0</span></span></div>
+      <div class="row"><span class="k">Caster °</span><span class="splitv"><span class="v L" id="sCastL">0</span><span class="v R" id="sCastR">0</span></span></div>
+      <div class="row"><span class="k">Toe in</span><span class="splitv"><span class="v L" id="sToeL">0</span><span class="v R" id="sToeR">0</span></span></div>
+      <div class="row"><span class="k">Total toe in</span><span class="v" id="sTotToe">0</span></div>
+      <div class="row"><span class="k">Track width</span><span class="v" id="sTrack">0</span></div>
+      <h4>Per Corner (live)</h4>
+      <div class="row"><span class="k">Wheel travel</span><span class="splitv"><span class="v L" id="hWtL">0.0</span><span class="v R" id="hWtR">0.0</span></span></div>
+      <div class="row"><span class="k">Shock travel</span><span class="splitv"><span class="v L" id="hStL">0.0</span><span class="v R" id="hStR">0.0</span></span></div>
+      <div class="row"><span class="k">Motion ratio</span><span class="splitv"><span class="v L" id="hMrL">0.0</span><span class="v R" id="hMrR">0.0</span></span></div>
+      <div class="row"><span class="k">Camber °</span><span class="splitv"><span class="v L" id="hCambL">0</span><span class="v R" id="hCambR">0</span></span></div>
+      <div class="row"><span class="k">Toe in</span><span class="splitv"><span class="v L" id="hToeL">0</span><span class="v R" id="hToeR">0</span></span></div>
+      <div class="row"><span class="k">Caster ° (live)</span><span class="splitv"><span class="v L" id="hCasterL">0</span><span class="v R" id="hCasterR">0</span></span></div>
+      <div class="row"><span class="k">KPI ° (live)</span><span class="splitv"><span class="v L" id="hKpiL">0</span><span class="v R" id="hKpiR">0</span></span></div>
+      <div class="row"><span class="k">Scrub rad in</span><span class="splitv"><span class="v L" id="hScrubL">0</span><span class="v R" id="hScrubR">0</span></span></div>
+      <div class="row"><span class="k">Mech trail in</span><span class="splitv"><span class="v L" id="hTrailL">0</span><span class="v R" id="hTrailR">0</span></span></div>
+      <div class="row"><span class="k">Camber gain</span><span class="splitv"><span class="v L" id="hGainL">0</span><span class="v R" id="hGainR">0</span></span></div>
+      <h4>Steering</h4>
+      <div class="row"><span class="k">Road steer °</span><span class="splitv"><span class="v L" id="hSteerL">0</span><span class="v R" id="hSteerR">0</span></span></div>
+      <div class="row"><span class="k">Ackermann</span><span class="v" id="hAck">—</span></div>
+      <div class="row"><span class="k">Toe-out / turn</span><span class="v" id="hTot">—</span></div>
+      <h4>Roll Center</h4>
+      <div class="row"><span class="k">Height</span><span class="v rc" id="hRcZ">0.0"</span></div>
+      <div class="row"><span class="k">Lateral</span><span class="v rc" id="hRcY">0.0"</span></div>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--accent)"></i>right</span>
+      <span><i class="dot" style="background:var(--accent2)"></i>left</span>
+      <span><i class="dot" style="background:var(--rc)"></i>roll center</span>
+      <span>drag orbit · scroll zoom · right-drag pan</span>
+    </div>
+    <div id="fv"><div class="fvh">FRONT VIEW — roll-center construction</div><canvas id="fvCanvas"></canvas><div class="fvf" id="fvInfo"></div></div>
+    <div id="asmErr"></div>
+  </div>
+
+  <div id="panel">
+    <div class="grp">
+      <h3>Wheel Motion</h3>
+      <div class="seg" id="modeSeg">
+        <button data-mode="wheel" class="on">Wheel travel</button>
+        <button data-mode="shock">Shock travel</button>
+      </div>
+      <label class="lockrow"><input type="checkbox" id="lock"> Lock L + R together</label>
+      <div class="ctl L">
+        <label>Left <span id="lblL">wheel</span> travel<span class="val" id="vTravL">0.00 in</span></label>
+        <input type="range" id="travL" min="-4" max="4" step="0.02" value="0">
+      </div>
+      <div class="ctl R">
+        <label>Right <span id="lblR">wheel</span> travel<span class="val" id="vTravR">0.00 in</span></label>
+        <input type="range" id="travR" min="-4" max="4" step="0.02" value="0">
+      </div>
+      <div class="ctl">
+        <label>Steering<span class="val s" id="vSteer">0.0°</span></label>
+        <input type="range" id="steer" min="-25" max="25" step="0.5" value="0">
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Adjustments (wrench moves, in turns)</h3>
+      <div class="coordhelp" style="margin-bottom:10px">
+        Turn wrenches, the assembly re-solves: alignment above updates as a
+        result. Heims &amp; sleeves are entered in <b>turns</b> (+ = longer).
+        Ride is re-trimmed to target after each change (jack bolt).
+      </div>
+      <div class="adjgrid"><span class="al"></span><span class="ah L">LEFT</span><span class="ah R">RIGHT</span></div>
+      <div class="adjgrid"><span class="al">Upper heim — front (turns)</span>
+        <input type="number" step="0.25" value="0" data-turn="L" data-tkey="hf">
+        <input type="number" step="0.25" value="0" data-turn="R" data-tkey="hf"></div>
+      <div class="adjgrid"><span class="al">Upper heim — rear (turns)</span>
+        <input type="number" step="0.25" value="0" data-turn="L" data-tkey="hr">
+        <input type="number" step="0.25" value="0" data-turn="R" data-tkey="hr"></div>
+      <div class="adjgrid"><span class="al">Tie rod sleeve (turns)</span>
+        <input type="number" step="0.25" value="0" data-turn="L" data-tkey="tie">
+        <input type="number" step="0.25" value="0" data-turn="R" data-tkey="tie"></div>
+      <div class="leglen" id="legLens"></div>
+      <div class="adjgrid" style="margin-top:8px"><span class="al">Upper slugs in/out (in)</span>
+        <input type="number" step="0.05" value="0" data-slug="L" data-skey="uio">
+        <input type="number" step="0.05" value="0" data-slug="R" data-skey="uio"></div>
+      <div class="adjgrid"><span class="al">Upper shims up/down (in)</span>
+        <input type="number" step="0.05" value="0" data-slug="L" data-skey="uud">
+        <input type="number" step="0.05" value="0" data-slug="R" data-skey="uud"></div>
+      <div class="adjgrid"><span class="al">Caster split, front slug (in)</span>
+        <input type="number" step="0.05" value="0" data-slug="L" data-skey="ucs">
+        <input type="number" step="0.05" value="0" data-slug="R" data-skey="ucs"></div>
+      <div class="adjgrid"><span class="al">Lower pivots in/out (in)</span>
+        <input type="number" step="0.05" value="0" data-slug="L" data-skey="lio">
+        <input type="number" step="0.05" value="0" data-slug="R" data-skey="lio"></div>
+      <div class="adjgrid"><span class="al">Lower pivots up/down (in)</span>
+        <input type="number" step="0.05" value="0" data-slug="L" data-skey="lud">
+        <input type="number" step="0.05" value="0" data-slug="R" data-skey="lud"></div>
+      <div class="btns" style="margin-top:8px">
+        <button class="b" id="adjZero">Zero all adjustments</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Spindle calibration</h3>
+      <div class="coordhelp" style="margin-bottom:10px">
+        Pin angles can't be tape-measured. Enter what the gauges read
+        <b>right now</b> at ride and calibrate — the pin direction is
+        back-solved and stored on the spindle part (§5).
+      </div>
+      <div class="adjgrid"><span class="al"></span><span class="ah L">LEFT</span><span class="ah R">RIGHT</span></div>
+      <div class="adjgrid"><span class="al">Measured camber (°)</span>
+        <input type="number" step="0.1" value="-1.0" data-cal="L" data-ckey="camber">
+        <input type="number" step="0.1" value="-1.0" data-cal="R" data-ckey="camber"></div>
+      <div class="adjgrid"><span class="al">Measured toe (in)</span>
+        <input type="number" step="0.005" value="0" data-cal="L" data-ckey="toe">
+        <input type="number" step="0.005" value="0" data-cal="R" data-ckey="toe"></div>
+      <div class="btns" style="margin-top:8px">
+        <button class="b primary" id="calBtn">Calibrate spindles</button>
+      </div>
+      <div class="err" id="calMsg"></div>
+    </div>
+
+    <div class="grp">
+      <h3>Display</h3>
+      <div class="toggles">
+        <label class="tg on"><input type="checkbox" id="tConstruct" checked> Construction lines</label>
+        <label class="tg on"><input type="checkbox" id="tTrail" checked> RC migration trail</label>
+        <label class="tg on"><input type="checkbox" id="tSpring" checked> Spring &amp; shock</label>
+        <label class="tg"><input type="checkbox" id="tWire"> Wheel wireframe</label>
+        <label class="tg on"><input type="checkbox" id="tFront" checked> Front view (2D)</label>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Analysis</h3>
+      <div class="charts">
+        <div class="chart"><h5>Camber vs wheel travel <b id="cCamb"></b></h5><canvas id="chCamb"></canvas></div>
+        <div class="chart"><h5>Bump steer vs travel (in) <b id="cToe"></b></h5><canvas id="chToe"></canvas></div>
+        <div class="chart"><h5>Roll-center height vs ride <b id="cRc"></b></h5><canvas id="chRc"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="hp-head" id="hpHead"><h3 style="margin:0">Parts &amp; chassis</h3><span class="chev" id="hpChev">▸ edit</span></div>
+      <div class="hp-body" id="hpBody">
+        <div class="coordhelp">
+          The car is built from parts: chassis pickups you measure ONCE, plus
+          part cards (arms, spindle, tie rods) you read off the bench.
+          Alignment is an output — there is no camber input anywhere.<br><br>
+          <b>x</b> = fore/aft from front-axle center (+ = forward)<br>
+          <b>out</b> = distance out from car centerline (always +)<br>
+          <b>z</b> = height off the ground at reference ride
+        </div>
+        <div id="hpForm"></div>
+        <div class="btns" style="margin-top:6px">
+          <button class="b primary" id="hpMirror">Mirror R → L</button>
+          <button class="b" id="hpReset">Reset defaults</button>
+        </div>
+        <div class="btns" style="margin-top:8px">
+          <button class="b primary" id="hpSave">Save setup file</button>
+          <button class="b" id="hpLoad">Load setup / v4 file</button>
+        </div>
+        <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
+        <div class="err" id="hpErr"></div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="btns">
+        <button class="b" id="recenter">Reset view</button>
+        <button class="b" id="zeroInputs">Zero motion</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

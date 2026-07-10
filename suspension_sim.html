@@ -1,0 +1,1043 @@
+<!--
+  Double-Wishbone Suspension Kinematics Simulator  (v4)
+  ------------------------------------------------------
+  SLA front suspension, outboard shock + separate coil spring,
+  parallelogram steering (pitman / center link / idler / tie rods).
+
+  v4: works like the actual car.
+   - The measured hardpoints CALIBRATE the rigid parts (arms, spindle, tie rod).
+   - Camber / caster / toe are OUTPUTS of the assembly, not inputs.
+   - New Adjustments panel: upper-arm slugs & shims, caster split, lower-arm
+     moves, tie-rod length -> alignment re-solves exactly like in the shop.
+   - Ride trim: after an adjustment the model re-lands the wheel at baseline
+     ride height (what you'd do with the jack bolt) and reports new alignment.
+   - Visuals: real knuckle (LBJ->UBJ through a spindle body), spindle pin +
+     hub locating the wheel, tire + rim + hubcap.
+  Solver chain per corner (constrained kinematics, not animation):
+    lower-arm angle -> LBJ ; upper-arm angle solved so |UBJ-LBJ| = upright
+    length -> UBJ ; rotation about kingpin solved from tie-rod length -> toe /
+    bump steer ; pitman/center-link/idler 4-bar -> Ackermann ; front-view
+    instant centers -> roll center + migration.
+  Units: inches & degrees.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Double-Wishbone Suspension Simulator</title>
+<style>
+  :root{
+    --bg:#0d1014; --panel:#151a21; --panel2:#1b212b; --line:#283340;
+    --ink:#e7edf3; --dim:#8a97a6; --accent:#ff6a1f; --accent2:#36c2ff;
+    --good:#46d18a; --bad:#ff5d6c; --rc:#ffd23f;
+    --mono:'SF Mono',ui-monospace,'Roboto Mono',Menlo,Consolas,monospace;
+    --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:var(--sans);overflow:hidden}
+  #app{display:flex;height:100%;width:100%}
+  #stage{position:relative;flex:1;min-width:0}
+  #scene{position:absolute;inset:0}
+  #stage canvas{display:block}
+  .badge{position:absolute;top:14px;left:16px;z-index:5;pointer-events:none}
+  .badge .t{font-weight:700;letter-spacing:.04em;font-size:13px}
+  .badge .t b{color:var(--accent)}
+  .badge .s{font-size:11px;color:var(--dim);margin-top:2px;font-family:var(--mono)}
+  #hud{position:absolute;top:14px;right:16px;z-index:5;width:242px;
+    background:rgba(21,26,33,.85);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:10px;padding:11px 12px;max-height:calc(100% - 28px);overflow-y:auto}
+  #hud h4{margin:10px 0 6px;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  #hud h4:first-child{margin-top:0}
+  .row{display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--mono);font-size:11.5px;padding:2px 0}
+  .row .k{color:var(--dim)}
+  .row .v{font-variant-numeric:tabular-nums;font-weight:600}
+  .row .v.L{color:var(--accent2)} .row .v.R{color:var(--accent)}
+  .splitv{display:flex;gap:9px}
+  .splitv .v{min-width:44px;text-align:right}
+  .legend{position:absolute;left:16px;bottom:14px;z-index:5;display:flex;gap:13px;
+    font-family:var(--mono);font-size:11px;color:var(--dim);flex-wrap:wrap;max-width:46%}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  #fv{position:absolute;right:16px;bottom:14px;z-index:5;width:340px;
+    background:rgba(21,26,33,.9);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:10px;padding:8px 10px 7px}
+  #fv .fvh{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--dim);margin-bottom:5px}
+  #fv canvas{width:100%;height:170px;display:block;border-radius:6px;background:#0b0e12}
+  #fv .fvf{font-family:var(--mono);font-size:9.5px;color:var(--dim);margin-top:5px;
+    font-variant-numeric:tabular-nums;line-height:1.4}
+  #panel{width:318px;flex:none;background:var(--panel);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;overflow-y:auto}
+  .grp{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .grp h3{margin:0 0 12px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+  .seg{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:3px;margin-bottom:14px}
+  .seg button{flex:1;background:transparent;border:none;color:var(--dim);font-size:12px;font-weight:600;
+    padding:7px;border-radius:5px;cursor:pointer}
+  .seg button.on{background:var(--accent);color:#0d1014}
+  .ctl{margin-bottom:14px}
+  .ctl:last-child{margin-bottom:0}
+  .ctl label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px}
+  .ctl label .val{font-family:var(--mono);font-weight:600;font-variant-numeric:tabular-nums}
+  .ctl.R label .val{color:var(--accent)} .ctl.L label .val{color:var(--accent2)}
+  .ctl label .val.s{color:var(--accent)}
+  input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:3px;background:var(--panel2);outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+    background:var(--accent);cursor:pointer;border:2px solid #0d1014;box-shadow:0 0 0 1px var(--accent)}
+  .ctl.L input[type=range]::-webkit-slider-thumb{background:var(--accent2);box-shadow:0 0 0 1px var(--accent2)}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid #0d1014}
+  .lockrow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin-bottom:12px;cursor:pointer}
+  .lockrow input{accent-color:var(--accent);width:14px;height:14px}
+  .toggles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tg{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);cursor:pointer;user-select:none}
+  .tg input{accent-color:var(--accent);width:14px;height:14px}
+  .tg.on{color:var(--ink)}
+  .btns{display:flex;gap:8px;flex-wrap:wrap}
+  button.b{flex:1;font-family:var(--sans);font-size:12px;font-weight:600;color:var(--ink);background:var(--panel2);
+    border:1px solid var(--line);border-radius:7px;padding:9px;cursor:pointer;transition:.12s;min-width:84px}
+  button.b:hover{border-color:var(--accent);color:var(--accent)}
+  button.b.primary{background:var(--accent);color:#0d1014;border-color:var(--accent)}
+  button.b.primary:hover{background:#ff7d3c}
+  .charts{display:flex;flex-direction:column;gap:12px}
+  .chart h5{margin:0 0 4px;font-size:11px;color:var(--dim);display:flex;justify-content:space-between}
+  .chart h5 b{color:var(--ink);font-family:var(--mono);font-weight:600}
+  .chart canvas{width:100%;height:76px;display:block;background:var(--panel2);border:1px solid var(--line);border-radius:7px}
+  .coordhelp{font-size:11px;color:var(--dim);line-height:1.55;margin-bottom:12px;
+    background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:9px 10px}
+  .coordhelp b{color:var(--ink)}
+  .hp-head{display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+  .hp-head .chev{color:var(--dim);font-size:12px}
+  .hp-body{display:none;margin-top:12px} .hp-body.open{display:block}
+  .subhead{font-size:11px;font-weight:700;letter-spacing:.04em;margin:14px 0 8px;color:var(--ink)}
+  .subhead.R{color:var(--accent)} .subhead.L{color:var(--accent2)}
+  .subhead:first-child{margin-top:0}
+  .ptrow{margin-bottom:8px}
+  .ptrow .pl{font-size:11px;color:var(--dim);margin-bottom:3px}
+  .xyz{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px}
+  .xyz .f{position:relative}
+  .xyz .f i{position:absolute;left:6px;top:5px;font-size:9px;color:var(--dim);font-style:normal;font-family:var(--mono)}
+  .xyz input{width:100%;background:#0b0e12;color:var(--ink);border:1px solid var(--line);border-radius:5px;
+    padding:6px 5px 6px 22px;font-family:var(--mono);font-size:11px}
+  .xyz input:focus{outline:none;border-color:var(--accent)}
+  .numrow{display:flex;gap:8px;margin-bottom:10px}
+  .numrow .nf{flex:1}
+  .numrow .nf label{display:block;font-size:11px;color:var(--dim);margin-bottom:3px}
+  .numrow .nf input{width:100%;background:#0b0e12;color:var(--ink);border:1px solid var(--line);border-radius:5px;
+    padding:6px;font-family:var(--mono);font-size:11px}
+  .adjgrid{display:grid;grid-template-columns:1fr 76px 76px;gap:5px;align-items:center;margin-bottom:4px}
+  .adjgrid .al{font-size:11px;color:var(--dim)}
+  .adjgrid .ah{font-size:10px;font-weight:700;text-align:center}
+  .adjgrid .ah.R{color:var(--accent)} .adjgrid .ah.L{color:var(--accent2)}
+  .adjgrid input{width:100%;background:#0b0e12;color:var(--ink);border:1px solid var(--line);border-radius:5px;
+    padding:5px 6px;font-family:var(--mono);font-size:11px}
+  .adjgrid input:focus{outline:none;border-color:var(--accent)}
+  .adv summary{font-size:11px;color:var(--dim);cursor:pointer;margin-top:12px}
+  textarea{width:100%;height:150px;background:#0b0e12;color:var(--good);border:1px solid var(--line);
+    border-radius:7px;font-family:var(--mono);font-size:10.5px;padding:8px;resize:vertical;margin-top:8px}
+  .err{color:var(--bad);font-size:11px;font-family:var(--mono);margin-top:6px;min-height:14px}
+  #fallback{position:absolute;inset:0;display:none;place-items:center;text-align:center;color:var(--dim);
+    font-family:var(--mono);font-size:13px;padding:40px;z-index:20}
+  @media(max-width:860px){
+    #app{flex-direction:column} #panel{width:100%;border-left:none;border-top:1px solid var(--line);max-height:48%}
+    #hud{width:188px;font-size:11px} .legend{max-width:46%}
+    #fv{width:230px} #fv canvas{height:120px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <div id="scene"></div>
+    <div class="badge">
+      <div class="t">SLA SUSPENSION <b>KINEMATICS</b></div>
+      <div class="s" id="sub">rigid-part assembly · alignment is solved, not typed</div>
+    </div>
+    <div id="hud">
+      <h4>Static (at ride, sliders 0)</h4>
+      <div class="row"><span class="k">Camber °</span><span class="splitv"><span class="v L" id="sCambL">0</span><span class="v R" id="sCambR">0</span></span></div>
+      <div class="row"><span class="k">Caster °</span><span class="splitv"><span class="v L" id="sCastL">0</span><span class="v R" id="sCastR">0</span></span></div>
+      <div class="row"><span class="k">Toe in</span><span class="splitv"><span class="v L" id="sToeL">0</span><span class="v R" id="sToeR">0</span></span></div>
+      <div class="row"><span class="k">Total toe in</span><span class="v" id="sTotToe">0</span></div>
+      <h4>Per Corner (live)</h4>
+      <div class="row"><span class="k">Wheel travel</span><span class="splitv"><span class="v L" id="hWtL">0.0</span><span class="v R" id="hWtR">0.0</span></span></div>
+      <div class="row"><span class="k">Shock travel</span><span class="splitv"><span class="v L" id="hStL">0.0</span><span class="v R" id="hStR">0.0</span></span></div>
+      <div class="row"><span class="k">Motion ratio</span><span class="splitv"><span class="v L" id="hMrL">0.0</span><span class="v R" id="hMrR">0.0</span></span></div>
+      <div class="row"><span class="k">Camber °</span><span class="splitv"><span class="v L" id="hCambL">0</span><span class="v R" id="hCambR">0</span></span></div>
+      <div class="row"><span class="k">Toe in</span><span class="splitv"><span class="v L" id="hToeL">0</span><span class="v R" id="hToeR">0</span></span></div>
+      <div class="row"><span class="k">Caster ° (live)</span><span class="splitv"><span class="v L" id="hCasterL">0</span><span class="v R" id="hCasterR">0</span></span></div>
+      <div class="row"><span class="k">KPI ° (live)</span><span class="splitv"><span class="v L" id="hKpiL">0</span><span class="v R" id="hKpiR">0</span></span></div>
+      <div class="row"><span class="k">Scrub rad in</span><span class="splitv"><span class="v L" id="hScrubL">0</span><span class="v R" id="hScrubR">0</span></span></div>
+      <div class="row"><span class="k">Mech trail in</span><span class="splitv"><span class="v L" id="hTrailL">0</span><span class="v R" id="hTrailR">0</span></span></div>
+      <div class="row"><span class="k">Camber gain</span><span class="splitv"><span class="v L" id="hGainL">0</span><span class="v R" id="hGainR">0</span></span></div>
+      <h4>Steering</h4>
+      <div class="row"><span class="k">Road steer °</span><span class="splitv"><span class="v L" id="hSteerL">0</span><span class="v R" id="hSteerR">0</span></span></div>
+      <div class="row"><span class="k">Ackermann</span><span class="v" id="hAck">—</span></div>
+      <div class="row"><span class="k">Toe-out / turn</span><span class="v" id="hTot">—</span></div>
+      <h4>Roll Center</h4>
+      <div class="row"><span class="k">Height</span><span class="v" style="color:var(--rc)" id="hRcZ">0.0"</span></div>
+      <div class="row"><span class="k">Lateral</span><span class="v" style="color:var(--rc)" id="hRcY">0.0"</span></div>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--accent)"></i>right</span>
+      <span><i class="dot" style="background:var(--accent2)"></i>left</span>
+      <span><i class="dot" style="background:var(--rc)"></i>roll center</span>
+      <span>drag orbit · scroll zoom · right-drag pan</span>
+    </div>
+    <div id="fv"><div class="fvh">FRONT VIEW — roll-center construction</div><canvas id="fvCanvas"></canvas><div class="fvf" id="fvInfo"></div></div>
+    <div id="fallback">Could not load the 3D library from the CDN.<br>If you opened this file offline, connect to the internet and reload.</div>
+  </div>
+
+  <div id="panel">
+    <div class="grp">
+      <h3>Wheel Motion</h3>
+      <div class="seg" id="modeSeg">
+        <button data-mode="wheel" class="on">Wheel travel</button>
+        <button data-mode="shock">Shock travel</button>
+      </div>
+      <label class="lockrow"><input type="checkbox" id="lock"> Lock L + R together</label>
+      <div class="ctl L">
+        <label>Left <span id="lblL">wheel</span> travel<span class="val" id="vTravL">0.00 in</span></label>
+        <input type="range" id="travL" min="-4" max="4" step="0.02" value="0">
+      </div>
+      <div class="ctl R">
+        <label>Right <span id="lblR">wheel</span> travel<span class="val" id="vTravR">0.00 in</span></label>
+        <input type="range" id="travR" min="-4" max="4" step="0.02" value="0">
+      </div>
+      <div class="ctl">
+        <label>Steering<span class="val s" id="vSteer">0.0°</span></label>
+        <input type="range" id="steer" min="-25" max="25" step="0.5" value="0">
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Adjustments (shop moves from baseline)</h3>
+      <div class="coordhelp" style="margin-bottom:10px">
+        These re-solve the whole assembly like turning wrenches: alignment above
+        updates as a result. + in/out = pivot moves <b>toward the wheel</b>.
+        Ride height is re-trimmed to baseline after each change (jack bolt).
+      </div>
+      <div class="adjgrid"><span class="al"></span><span class="ah L">LEFT</span><span class="ah R">RIGHT</span></div>
+      <div class="adjgrid"><span class="al">Upper slugs in/out (in)</span>
+        <input type="number" step="0.05" value="0" data-adj="L" data-akey="uio">
+        <input type="number" step="0.05" value="0" data-adj="R" data-akey="uio"></div>
+      <div class="adjgrid"><span class="al">Upper shims up/down (in)</span>
+        <input type="number" step="0.05" value="0" data-adj="L" data-akey="uud">
+        <input type="number" step="0.05" value="0" data-adj="R" data-akey="uud"></div>
+      <div class="adjgrid"><span class="al">Caster split, front slug (in)</span>
+        <input type="number" step="0.05" value="0" data-adj="L" data-akey="ucs">
+        <input type="number" step="0.05" value="0" data-adj="R" data-akey="ucs"></div>
+      <div class="adjgrid"><span class="al">Lower pivots in/out (in)</span>
+        <input type="number" step="0.05" value="0" data-adj="L" data-akey="lio">
+        <input type="number" step="0.05" value="0" data-adj="R" data-akey="lio"></div>
+      <div class="adjgrid"><span class="al">Lower pivots up/down (in)</span>
+        <input type="number" step="0.05" value="0" data-adj="L" data-akey="lud">
+        <input type="number" step="0.05" value="0" data-adj="R" data-akey="lud"></div>
+      <div class="adjgrid"><span class="al">Lower arm length ± (in)</span>
+        <input type="number" step="0.05" value="0" data-adj="L" data-akey="lal">
+        <input type="number" step="0.05" value="0" data-adj="R" data-akey="lal"></div>
+      <div class="adjgrid"><span class="al">Upper arm length ± (in)</span>
+        <input type="number" step="0.05" value="0" data-adj="L" data-akey="ual">
+        <input type="number" step="0.05" value="0" data-adj="R" data-akey="ual"></div>
+      <div class="adjgrid"><span class="al">Tie rod length ± (in)</span>
+        <input type="number" step="0.01" value="0" data-adj="L" data-akey="tie">
+        <input type="number" step="0.01" value="0" data-adj="R" data-akey="tie"></div>
+      <div class="btns" style="margin-top:8px">
+        <button class="b" id="adjZero">Zero all adjustments</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Display</h3>
+      <div class="toggles">
+        <label class="tg on"><input type="checkbox" id="tConstruct" checked> Construction lines</label>
+        <label class="tg on"><input type="checkbox" id="tTrail" checked> RC migration trail</label>
+        <label class="tg on"><input type="checkbox" id="tSpring" checked> Spring &amp; shock</label>
+        <label class="tg"><input type="checkbox" id="tWire"> Wheel wireframe</label>
+        <label class="tg on"><input type="checkbox" id="tFront" checked> Front view (2D)</label>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Analysis</h3>
+      <div class="charts">
+        <div class="chart"><h5>Camber vs wheel travel <b id="cCamb"></b></h5><canvas id="chCamb"></canvas></div>
+        <div class="chart"><h5>Bump steer vs travel (in) <b id="cToe"></b></h5><canvas id="chToe"></canvas></div>
+        <div class="chart"><h5>Roll-center height vs ride <b id="cRc"></b></h5><canvas id="chRc"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="hp-head" id="hpHead"><h3 style="margin:0">Baseline measurements</h3><span class="chev" id="hpChev">▸ edit</span></div>
+      <div class="hp-body" id="hpBody">
+        <div class="coordhelp">
+          Measure the car ONCE at ride height — this calibrates the parts
+          (arm lengths, spindle, tie rods). Then use <b>Adjustments</b> above for
+          what-ifs.<br><br>
+          <b>x</b> = fore/aft from front-axle center (+ = forward)<br>
+          <b>out</b> = distance out from car centerline (always +)<br>
+          <b>z</b> = height off the ground<br>
+          Camber/toe you measure with your gauge &amp; tape — they pin down how the
+          spindle pin sits in the knuckle.
+        </div>
+        <div id="hpForm"></div>
+        <div class="btns" style="margin-top:6px">
+          <button class="b primary" id="hpMirror">Mirror R → L</button>
+          <button class="b" id="hpReset">Reset defaults</button>
+        </div>
+        <div class="btns" style="margin-top:8px">
+          <button class="b primary" id="hpSave">Save setup file</button>
+          <button class="b" id="hpLoad">Load setup file</button>
+        </div>
+        <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
+        <details class="adv">
+          <summary>Advanced: import / export JSON</summary>
+          <textarea id="hpJson" spellcheck="false"></textarea>
+          <div class="err" id="hpErr"></div>
+          <div class="btns" style="margin-top:6px">
+            <button class="b primary" id="hpApply">Apply JSON</button>
+            <button class="b" id="hpDump">Refresh JSON</button>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="btns">
+        <button class="b" id="recenter">Reset view</button>
+        <button class="b" id="zeroInputs">Zero motion</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+if(typeof THREE==="undefined"){document.getElementById("fallback").style.display="grid";return;}
+const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+const Va=a=>new THREE.Vector3(a[0],a[1],a[2]);
+const DEG=Math.PI/180, RAD=180/Math.PI;
+
+/* ============================================================ DEFAULT SETUP
+   Baseline = what you measured on the real car. Camber/toe measured with a
+   gauge; they calibrate the spindle-pin orientation inside the knuckle. */
+const R_DEF = {
+  measCamber:-1.0, measToe:0.0,
+  lowerFront:[ 8, 5.0, 4.2], lowerRear:[-8, 5.0, 4.2], LBJ:[ 1.0, 24.5, 3.8],
+  upperFront:[ 6,10.0,14.0], upperRear:[-6,10.0,14.0], UBJ:[-1.0, 22.5,15.0],
+  wheelCenter:[0, 31.0, 11.0], tieRodOuter:[ 6.5, 25.0, 5.2],
+  springLower:[-2.0, 17.0, 4.8], springUpper:[-2.0, 14.0, 24.0],
+  shockLower:[ 2.5, 16.0, 4.8], shockUpper:[ 2.5, 13.5, 24.0],
+  adj:{uio:0,uud:0,ucs:0,lio:0,lud:0,tie:0,lal:0,ual:0}
+};
+function mirrorCorner(R){
+  const o={measCamber:R.measCamber, measToe:R.measToe, adj:Object.assign({},R.adj)};
+  for(const k in R){ if(k==='measCamber'||k==='measToe'||k==='adj')continue;
+    o[k]=[R[k][0], -R[k][1], R[k][2]]; }
+  return o;
+}
+const HP_DEFAULT = {
+  common:{
+    wheelRadius:11, wheelWidth:8, wheelbase:108, toeGaugeDia:22,
+    pitmanPivot:[12,-12,6.0], pitmanArmEnd:[6,-10,6.0],
+    idlerPivot:[12, 12,6.0], idlerArmEnd:[6, 10,6.0]
+  },
+  R: JSON.parse(JSON.stringify(R_DEF)),
+  L: mirrorCorner(R_DEF)
+};
+let HP = JSON.parse(JSON.stringify(HP_DEFAULT));
+
+const CORNER_PTS=[
+  ['lowerFront','Lower arm — front pivot'],['lowerRear','Lower arm — rear pivot'],
+  ['LBJ','Lower ball joint'],['upperFront','Upper arm — front pivot'],
+  ['upperRear','Upper arm — rear pivot'],['UBJ','Upper ball joint'],
+  ['wheelCenter','Wheel center (hub face)'],['tieRodOuter','Tie-rod outer (steering arm)'],
+  ['springLower','Spring — lower seat (on arm)'],['springUpper','Spring — upper seat (frame)'],
+  ['shockLower','Shock — lower mount (on arm)'],['shockUpper','Shock — upper mount (frame)']
+];
+const STEER_PTS=[
+  ['pitmanPivot','Pitman pivot (box output)'],['pitmanArmEnd','Pitman arm end (link L)'],
+  ['idlerPivot','Idler pivot'],['idlerArmEnd','Idler arm end (link R)']
+];
+
+/* ============================================================ MATH */
+function rotAboutAxis(p, axisPt, axisDir, ang){
+  const q=new THREE.Quaternion().setFromAxisAngle(axisDir.clone().normalize(), ang);
+  return p.clone().sub(axisPt).applyQuaternion(q).add(axisPt);
+}
+function solveRoot(f, x0, lo, hi){
+  let x=x0;
+  for(let i=0;i<24;i++){
+    const fx=f(x); if(Math.abs(fx)<1e-7) return x;
+    const d=(f(x+1e-5)-fx)/1e-5; if(!isFinite(d)||Math.abs(d)<1e-10) break;
+    let nx=x-fx/d; if(nx<lo)nx=lo; if(nx>hi)nx=hi;
+    if(Math.abs(nx-x)<1e-9){x=nx;break;} x=nx;
+  }
+  if(Math.abs(f(x))<1e-4) return x;
+  const N=240, step=(hi-lo)/N; let best=null,bd=1e9,pX=lo,pF=f(lo);
+  for(let s=lo+step;s<=hi+1e-9;s+=step){ const cf=f(s);
+    if(isFinite(pF)&&isFinite(cf)&&pF*cf<=0){ let a=pX,b=s,fa=pF;
+      for(let k=0;k<60;k++){const m=(a+b)/2,fm=f(m); if(fa*fm<=0)b=m; else {a=m;fa=fm;}}
+      const r=(a+b)/2, dd=Math.abs(r-x0); if(dd<bd){bd=dd;best=r;} }
+    pX=s; pF=cf; }
+  return best!==null?best:x;
+}
+function intersect2D(P1,P2,P3,P4){
+  const x1=P1[0],y1=P1[1],x2=P2[0],y2=P2[1],x3=P3[0],y3=P3[1],x4=P4[0],y4=P4[1];
+  const den=(x1-x2)*(y3-y4)-(y1-y2)*(x3-x4);
+  if(Math.abs(den)<1e-9) return null;
+  const t=((x1-x3)*(y3-y4)-(y1-y3)*(x3-x4))/den;
+  return [x1+t*(x2-x1), y1+t*(y2-y1)];
+}
+
+/* ---- rigid control arm: baseline pivots+points define the PART; adjusted
+   pivots move it. Attached points transport with the arm (length preserved). */
+function makeArm(Pf0,Pr0, PfA,PrA){
+  const dir0=Pr0.clone().sub(Pf0).normalize();
+  const dirA=PrA.clone().sub(PfA).normalize();
+  const q=new THREE.Quaternion().setFromUnitVectors(dir0,dirA);
+  return {
+    Pf0,dir0,PfA,dirA,q,
+    attach(p0){ // returns {a0, r0} local coords of a baseline-attached point
+      const a0=p0.clone().sub(Pf0).dot(dir0);
+      const c0=Pf0.clone().add(dir0.clone().multiplyScalar(a0));
+      return {a0, r0:p0.clone().sub(c0)};
+    },
+    point(att,theta){ // world position of attachment at arm angle theta
+      const c=this.PfA.clone().add(this.dirA.clone().multiplyScalar(att.a0));
+      const r=att.r0.clone().applyQuaternion(this.q);
+      return rotAboutAxis(c.clone().add(r), c, this.dirA, theta);
+    }
+  };
+}
+
+/* ============================================================ BUILD SIDE
+   Calibrates parts from baseline measurements, applies adjustments, solves
+   ride trim. Alignment becomes an OUTPUT. */
+function buildStatic(sideKey){
+  const d=HP[sideKey], sign=sideKey==='R'?1:-1, s={};
+  s.side=sign;
+  const adj=d.adj||{uio:0,uud:0,ucs:0,lio:0,lud:0,tie:0,lal:0,ual:0};
+  const io=v=>V(0,sign*v,0); // in/out adjustment vector (+ = toward wheel)
+  // baseline pivots
+  const lf0=Va(d.lowerFront), lr0=Va(d.lowerRear),
+        uf0=Va(d.upperFront), ur0=Va(d.upperRear);
+  // adjusted pivots: slugs/shims
+  const lfA=lf0.clone().add(io(adj.lio)).add(V(0,0,adj.lud));
+  const lrA=lr0.clone().add(io(adj.lio)).add(V(0,0,adj.lud));
+  const ufA=uf0.clone().add(io(adj.uio+adj.ucs)).add(V(0,0,adj.uud));
+  const urA=ur0.clone().add(io(adj.uio-adj.ucs)).add(V(0,0,adj.uud));
+  s.lowerFront=lfA; s.lowerRear=lrA; s.upperFront=ufA; s.upperRear=urA;
+  // rigid arms
+  s.lowArm=makeArm(lf0,lr0,lfA,lrA);
+  s.upArm=makeArm(uf0,ur0,ufA,urA);
+  // attachments (baseline positions define the parts)
+  s.LBJ0=Va(d.LBJ); s.UBJ0=Va(d.UBJ); s.WC0=Va(d.wheelCenter); s.TRO0=Va(d.tieRodOuter);
+  s.attLBJ=s.lowArm.attach(s.LBJ0);
+  s.attUBJ=s.upArm.attach(s.UBJ0);
+  // adjustable arm lengths: stretch the BJ radially (longer/shorter arm)
+  if(adj.lal){const L=s.attLBJ.r0.length();s.attLBJ.r0.multiplyScalar((L+adj.lal)/L);}
+  if(adj.ual){const L=s.attUBJ.r0.length();s.attUBJ.r0.multiplyScalar((L+adj.ual)/L);}
+  s.attSpringLow=s.lowArm.attach(Va(d.springLower));
+  s.attShockLow=s.lowArm.attach(Va(d.shockLower));
+  s.springUpper0=Va(d.springUpper); s.shockUpper0=Va(d.shockUpper);
+  s.uprLen=s.UBJ0.distanceTo(s.LBJ0);       // spindle: rigid part
+  s.tieAdj=adj.tie;
+  // spindle pin calibrated from MEASURED camber/toe at baseline
+  let ax=V(0,sign,0);
+  ax=rotAboutAxis(ax,V(0,0,0),V(1,0,0), -d.measCamber*DEG*sign);
+  ax=rotAboutAxis(ax,V(0,0,0),V(0,0,1),  toeDegFromIn(d.measToe)*DEG*sign);
+  s.wheelAxis0=ax.normalize();
+  s.phi=0; s.psi=0; s.headAng0=0; s.trimTheta=0; s.shockLenTrim=0;
+  return s;
+}
+function solveUBJ(stat,LBJ,warm){
+  const f=phi=>stat.upArm.point(stat.attUBJ,phi).distanceTo(LBJ)-stat.uprLen;
+  const phi=solveRoot(f,warm,-0.9,0.9);
+  return {phi,UBJ:stat.upArm.point(stat.attUBJ,phi)};
+}
+function uprightXform(stat,LBJ,UBJ,psi){
+  const e1=stat.UBJ0.clone().sub(stat.LBJ0).normalize();
+  const f1=UBJ.clone().sub(LBJ).normalize();
+  const R0=new THREE.Quaternion().setFromUnitVectors(e1,f1);
+  const Rp=new THREE.Quaternion().setFromAxisAngle(f1,psi);
+  const R=Rp.clone().multiply(R0);
+  return {xf:p0=>p0.clone().sub(stat.LBJ0).applyQuaternion(R).add(LBJ),
+          xfDir:d0=>d0.clone().applyQuaternion(R)};
+}
+function solveCorner(stat,theta,TRI,tieLen,warm){
+  const LBJ=stat.lowArm.point(stat.attLBJ,theta);
+  const ub=solveUBJ(stat,LBJ,warm.phi); const UBJ=ub.UBJ;
+  const g=psi=>uprightXform(stat,LBJ,UBJ,psi).xf(stat.TRO0).distanceTo(TRI)-tieLen;
+  const psi=solveRoot(g,warm.psi,-0.9,0.9);
+  const x=uprightXform(stat,LBJ,UBJ,psi);
+  const WC=x.xf(stat.WC0), TRO=x.xf(stat.TRO0);
+  const spin=x.xfDir(stat.wheelAxis0).normalize();
+  stat.phi=ub.phi; stat.psi=psi;
+  const ob=stat.side;
+  const camber=-Math.atan2(spin.z, ob*spin.y)*RAD;
+  const heading=spin.clone().cross(V(0,0,1)); if(heading.x<0)heading.multiplyScalar(-1);
+  const toe=-ob*Math.atan2(heading.y,heading.x)*RAD;
+  const steerAng=Math.atan2(heading.y,heading.x)*RAD;
+  const kp=UBJ.clone().sub(LBJ);
+  const casterLive=Math.atan2(LBJ.x-UBJ.x, UBJ.z-LBJ.z)*RAD;
+  const kpiLive=Math.atan2(ob*(LBJ.y-UBJ.y), UBJ.z-LBJ.z)*RAD;
+  let scrub=NaN, trail=NaN;
+  if(Math.abs(kp.z)>1e-6){
+    const tg=-LBJ.z/kp.z;
+    const gy=LBJ.y+tg*kp.y, gx=LBJ.x+tg*kp.x;
+    scrub=ob*(WC.y-gy); trail=gx-WC.x;
+  }
+  return {LBJ,UBJ,WC,TRO,TRI,spin,camber,toe,steerAng,casterLive,kpiLive,scrub,trail,CPy:WC.y,theta,xf:x.xf};
+}
+function fullWCz(stat,theta,TRI,tieLen){
+  const LBJ=stat.lowArm.point(stat.attLBJ,theta);
+  const ub=solveUBJ(stat,LBJ,0);
+  const g=psi=>uprightXform(stat,LBJ,ub.UBJ,psi).xf(stat.TRO0).distanceTo(TRI)-tieLen;
+  const psi=solveRoot(g,0,-0.9,0.9);
+  return uprightXform(stat,LBJ,ub.UBJ,psi).xf(stat.WC0).z;
+}
+function thetaForWheelExact(stat,dz,TRI,tieLen){
+  // dz measured from BASELINE ride height (WC0.z)
+  return solveRoot(t=>fullWCz(stat,t,TRI,tieLen)-stat.WC0.z-dz,stat.trimTheta,-0.7,0.7);
+}
+function shockLenAt(stat,theta){
+  return stat.shockUpper0.distanceTo(stat.lowArm.point(stat.attShockLow,theta));
+}
+function thetaForShock(stat,travel,TRI,tieLen){
+  // travel measured from the TRIMMED static shock length (compression +)
+  return solveRoot(t=>shockLenAt(stat,t)-(stat.shockLenTrim-travel),stat.trimTheta,-0.7,0.7);
+}
+function wczAt(stat,theta){ // psi=0 helper for motion ratio
+  const LBJ=stat.lowArm.point(stat.attLBJ,theta);
+  const ub=solveUBJ(stat,LBJ,0);
+  return uprightXform(stat,LBJ,ub.UBJ,0).xf(stat.WC0).z;
+}
+function motionRatio(stat,theta){
+  const d=0.012;
+  const dW=wczAt(stat,theta+d)-wczAt(stat,theta-d);
+  const dS=shockLenAt(stat,theta+d)-shockLenAt(stat,theta-d);
+  return Math.abs(dW)<1e-6?0:Math.abs(dS/dW);
+}
+let steerWarmBeta=0;
+function solveSteering(alphaDeg){
+  const c=HP.common, Pp=Va(c.pitmanPivot),Pi=Va(c.idlerPivot),
+        CLL0=Va(c.pitmanArmEnd),CLR0=Va(c.idlerArmEnd),Z=V(0,0,1);
+  const CLL=rotAboutAxis(CLL0,Pp,Z,alphaDeg*DEG);
+  const clen0=CLL0.distanceTo(CLR0);
+  const beta=solveRoot(b=>rotAboutAxis(CLR0,Pi,Z,b).distanceTo(CLL)-clen0,steerWarmBeta,-1.2,1.2);
+  steerWarmBeta=beta;
+  const CLR=rotAboutAxis(CLR0,Pi,Z,beta);
+  return {CLL,CLR,Pp,Pi,TRI_L:CLL.clone(),TRI_R:CLR.clone()};
+}
+function rollCenter(R,L){
+  const lmR=[(R.lf.y+R.lr.y)/2,(R.lf.z+R.lr.z)/2], umR=[(R.uf.y+R.ur.y)/2,(R.uf.z+R.ur.z)/2];
+  const lmL=[(L.lf.y+L.lr.y)/2,(L.lf.z+L.lr.z)/2], umL=[(L.uf.y+L.ur.y)/2,(L.uf.z+L.ur.z)/2];
+  const icR=intersect2D([R.LBJ.y,R.LBJ.z],lmR,[R.UBJ.y,R.UBJ.z],umR);
+  const icL=intersect2D([L.LBJ.y,L.LBJ.z],lmL,[L.UBJ.y,L.UBJ.z],umL);
+  if(!icR||!icL) return {rc:null,icR,icL};
+  return {rc:intersect2D([R.CPy,0],icR,[L.CPy,0],icL), icR, icL};
+}
+const toeIn = deg => HP.common.toeGaugeDia*Math.tan(deg*DEG);
+const toeDegFromIn = inch => Math.atan(inch/HP.common.toeGaugeDia)*RAD;
+
+/* ============================================================ THREE SCENE */
+const host=document.getElementById("scene");
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0d1014);
+let camera=new THREE.PerspectiveCamera(42, host.clientWidth/host.clientHeight,0.5,1000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(host.clientWidth,host.clientHeight); host.appendChild(renderer.domElement);
+scene.add(new THREE.AmbientLight(0xffffff,0.55));
+const keyL=new THREE.DirectionalLight(0xffffff,0.9); keyL.position.set(40,-30,60); scene.add(keyL);
+const fillL=new THREE.DirectionalLight(0x88aaff,0.35); fillL.position.set(-40,40,20); scene.add(fillL);
+const grid=new THREE.GridHelper(140,28,0x2a3340,0x1a2027); grid.rotation.x=Math.PI/2; scene.add(grid);
+
+const COL={low:0x9aa7b5,up:0xb6c3d1,upr:0xff8a3d,tire:0x22282f,rim:0x39424d,tie:0x46d18a,
+  link:0x36c2ff,arm:0xffd23f,spring:0xff6a1f,shock:0x6b7787,frame:0x3a4654,hub:0xcdd6e0};
+function rod(r,c){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,1,14),
+  new THREE.MeshStandardMaterial({color:c,metalness:.55,roughness:.45}));scene.add(m);return m;}
+function setRod(m,p1,p2){const dir=p2.clone().sub(p1),len=dir.length();
+  if(len<1e-6){m.visible=false;return;}m.visible=true;
+  m.position.copy(p1.clone().add(p2).multiplyScalar(.5));
+  m.quaternion.setFromUnitVectors(V(0,1,0),dir.clone().normalize());m.scale.set(1,len,1);}
+function ball(r,c){const m=new THREE.Mesh(new THREE.SphereGeometry(r,16,16),
+  new THREE.MeshStandardMaterial({color:c,metalness:.3,roughness:.5,emissive:c,emissiveIntensity:.15}));
+  scene.add(m);return m;}
+function lineObj(c,dashed){const mat=dashed?new THREE.LineDashedMaterial({color:c,dashSize:1.2,gapSize:0.8})
+  :new THREE.LineBasicMaterial({color:c});const l=new THREE.Line(new THREE.BufferGeometry(),mat);
+  scene.add(l);l._dashed=!!dashed;return l;}
+function setLine(l,pts){l.geometry.setFromPoints(pts); if(l._dashed)l.computeLineDistances();}
+
+/* wheel = tire torus + rim disc + hubcap, oriented along the spin axis */
+function makeWheel(rimCol){
+  const g=new THREE.Group(); scene.add(g);
+  const R=HP.common.wheelRadius, W=HP.common.wheelWidth;
+  const tire=new THREE.Mesh(new THREE.TorusGeometry(R-W*0.28, W*0.32, 12, 30),
+    new THREE.MeshStandardMaterial({color:COL.tire,metalness:.1,roughness:.85}));
+  tire.rotation.x=Math.PI/2; g.add(g._tire=tire);
+  const rim=new THREE.Mesh(new THREE.CylinderGeometry(R-W*0.55,R-W*0.55,W*0.55,24),
+    new THREE.MeshStandardMaterial({color:COL.rim,metalness:.6,roughness:.35}));
+  g.add(g._rim=rim);
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(R-W*0.55,.4,8,26),
+    new THREE.MeshStandardMaterial({color:rimCol,metalness:.6,roughness:.4}));
+  ring.rotation.x=Math.PI/2; g.add(g._ring=ring);
+  const cap=new THREE.Mesh(new THREE.CylinderGeometry(1.6,1.6,W*0.62,14),
+    new THREE.MeshStandardMaterial({color:rimCol,metalness:.7,roughness:.3}));
+  g.add(g._cap=cap);
+  g._rebuild=function(){
+    const R=HP.common.wheelRadius, W=HP.common.wheelWidth;
+    g._tire.geometry.dispose(); g._tire.geometry=new THREE.TorusGeometry(R-W*0.28,W*0.32,12,30);
+    g._rim.geometry.dispose(); g._rim.geometry=new THREE.CylinderGeometry(R-W*0.55,R-W*0.55,W*0.55,24);
+    g._ring.geometry.dispose(); g._ring.geometry=new THREE.TorusGeometry(R-W*0.55,.4,8,26);
+    g._cap.geometry.dispose(); g._cap.geometry=new THREE.CylinderGeometry(1.6,1.6,W*0.62,14);
+  };
+  return g;
+}
+function makeSide(rimCol){return {
+  lowA1:rod(.42,COL.low),lowA2:rod(.42,COL.low),upA1:rod(.38,COL.up),upA2:rod(.38,COL.up),
+  uprLow:rod(.5,COL.upr),uprHigh:rod(.5,COL.upr),        // knuckle: LBJ->body->UBJ
+  pin:rod(.34,COL.hub),                                  // spindle pin body->hub
+  hub:rod(1.15,COL.hub),                                 // hub disc (short fat rod on pin)
+  arm:rod(.36,COL.arm),tie:rod(.3,COL.tie),
+  bjL:ball(.65,0xff5d6c),bjU:ball(.65,0xff5d6c),
+  wheel:makeWheel(rimCol),
+  spring:lineObj(COL.spring,false),shockBody:rod(.55,COL.shock),shockShaft:rod(.26,0xcdd6e0),
+  swingLine:lineObj(0x7a8aa0,true),icDot:ball(.6,0x7a8aa0)
+};}
+const visR=makeSide(0xff6a1f), visL=makeSide(0x36c2ff);
+const linkPitman=rod(.42,COL.arm),linkIdler=rod(.42,COL.arm),linkCenter=rod(.48,COL.link);
+const pivPit=ball(.8,COL.frame),pivIdl=ball(.8,COL.frame);
+const rcDot=ball(1.0,0xffd23f); rcDot.material.emissiveIntensity=.5;
+const rcLineR=lineObj(0xffd23f,false),rcLineL=lineObj(0xffd23f,false);
+let trail=[]; const trailLine=lineObj(0xffd23f,false);
+trailLine.material.transparent=true; trailLine.material.opacity=.6;
+const frameLines=[]; for(let i=0;i<6;i++)frameLines.push(lineObj(COL.frame,false));
+
+function springPts(p1,p2,coils,radius,seg){
+  const axis=p2.clone().sub(p1),len=axis.length(),dir=axis.clone().normalize();
+  let u=V(1,0,0); if(Math.abs(dir.dot(u))>.9)u=V(0,1,0);
+  const a=u.clone().cross(dir).normalize(),b=dir.clone().cross(a).normalize(),pts=[],N=coils*seg;
+  for(let i=0;i<=N;i++){const t=i/N,ang=t*coils*2*Math.PI;
+    const c=p1.clone().add(dir.clone().multiplyScalar(t*len));
+    c.add(a.clone().multiplyScalar(Math.cos(ang)*radius)).add(b.clone().multiplyScalar(Math.sin(ang)*radius));
+    pts.push(c);} return pts;
+}
+
+/* ============================================================ STATE */
+let statR,statL,sweepData=null;
+function recomputeStatics(){
+  statR=buildStatic('R'); statL=buildStatic('L');
+  const st=solveSteering(0);
+  // tie rod = physical part: baseline length + adjustment
+  statR.tieLen=statR.TRO0.distanceTo(st.TRI_R)+statR.tieAdj;
+  statL.tieLen=statL.TRO0.distanceTo(st.TRI_L)+statL.tieAdj;
+  // ride trim: land the wheel back at baseline ride height (jack bolt)
+  statR.trimTheta=thetaForWheelExact(statR,0,st.TRI_R,statR.tieLen);
+  statL.trimTheta=thetaForWheelExact(statL,0,st.TRI_L,statL.tieLen);
+  statR.shockLenTrim=shockLenAt(statR,statR.trimTheta);
+  statL.shockLenTrim=shockLenAt(statL,statL.trimTheta);
+  // static (trimmed) alignment -> OUTPUTS
+  const cR=solveCorner(statR,statR.trimTheta,st.TRI_R,statR.tieLen,statR);
+  const cL=solveCorner(statL,statL.trimTheta,st.TRI_L,statL.tieLen,statL);
+  statR.headAng0=cR.steerAng; statL.headAng0=cL.steerAng;
+  statR.static=cR; statL.static=cL;
+  visR.wheel._rebuild(); visL.wheel._rebuild();
+  computeSweep(); trail=[];
+}
+function computeSweep(){
+  const st=solveSteering(0),N=49,lo=-4,hi=4;
+  const trav=[],cambR=[],cambL=[],toeR=[],toeL=[],rcz=[];
+  const wr={phi:0,psi:0},wl={phi:0,psi:0};
+  for(let i=0;i<N;i++){
+    const t=lo+(hi-lo)*i/(N-1); trav.push(t);
+    const thR=thetaForWheelExact(statR,t,st.TRI_R,statR.tieLen);
+    const thL=thetaForWheelExact(statL,t,st.TRI_L,statL.tieLen);
+    const cR=solveCorner(statR,thR,st.TRI_R,statR.tieLen,wr);
+    const cL=solveCorner(statL,thL,st.TRI_L,statL.tieLen,wl);
+    cambR.push(cR.camber);cambL.push(cL.camber);toeR.push(cR.toe);toeL.push(cL.toe);
+    const rc=rollCenter(
+      {lf:statR.lowerFront,lr:statR.lowerRear,uf:statR.upperFront,ur:statR.upperRear,LBJ:cR.LBJ,UBJ:cR.UBJ,CPy:cR.CPy},
+      {lf:statL.lowerFront,lr:statL.lowerRear,uf:statL.upperFront,ur:statL.upperRear,LBJ:cL.LBJ,UBJ:cL.UBJ,CPy:cL.CPy});
+    rcz.push(rc.rc?rc.rc[1]:NaN);
+  }
+  sweepData={trav,cambR,cambL,toeR,toeL,rcz};
+}
+
+let mode="wheel";
+function metricsNow(){
+  const sl=+document.getElementById("travL").value;
+  const sr=+document.getElementById("travR").value;
+  const steerA=+document.getElementById("steer").value;
+  const st=solveSteering(steerA);
+  const thR=mode==="wheel"?thetaForWheelExact(statR,sr,st.TRI_R,statR.tieLen):thetaForShock(statR,sr,st.TRI_R,statR.tieLen);
+  const thL=mode==="wheel"?thetaForWheelExact(statL,sl,st.TRI_L,statL.tieLen):thetaForShock(statL,sl,st.TRI_L,statL.tieLen);
+  const cR=solveCorner(statR,thR,st.TRI_R,statR.tieLen,statR);
+  const cL=solveCorner(statL,thL,st.TRI_L,statL.tieLen,statL);
+  const wtR=cR.WC.z-statR.WC0.z, wtL=cL.WC.z-statL.WC0.z;
+  const stkR=statR.shockLenTrim-shockLenAt(statR,thR), stkL=statL.shockLenTrim-shockLenAt(statL,thL);
+  const mrR=motionRatio(statR,thR), mrL=motionRatio(statL,thL);
+  const rc=rollCenter(
+    {lf:statR.lowerFront,lr:statR.lowerRear,uf:statR.upperFront,ur:statR.upperRear,LBJ:cR.LBJ,UBJ:cR.UBJ,CPy:cR.CPy},
+    {lf:statL.lowerFront,lr:statL.lowerRear,uf:statL.upperFront,ur:statL.upperRear,LBJ:cL.LBJ,UBJ:cL.UBJ,CPy:cL.CPy});
+  const steerR=cR.steerAng-statR.headAng0, steerL=cL.steerAng-statL.headAng0;
+  let ack=null, tot=null;
+  if(Math.abs(steerA)>3){
+    const dR=Math.abs(steerR),dL=Math.abs(steerL);
+    const din=Math.max(dR,dL),dout=Math.min(dR,dL);
+    const track=statR.WC0.y-statL.WC0.y;
+    const ideal=track/HP.common.wheelbase;
+    const actual=1/Math.tan(dout*DEG)-1/Math.tan(din*DEG);
+    if(isFinite(actual)&&Math.abs(ideal)>1e-6) ack=actual/ideal*100;
+    tot=din-dout;
+  }
+  return {cR,cL,st,rc,wtR,wtL,stkR,stkL,mrR,mrL,steerR,steerL,steerA,ack,tot};
+}
+
+/* ============================================================ DRAW */
+function drawCorner(v,stat,c){
+  setRod(v.lowA1,stat.lowerFront,c.LBJ); setRod(v.lowA2,stat.lowerRear,c.LBJ);
+  setRod(v.upA1,stat.upperFront,c.UBJ); setRod(v.upA2,stat.upperRear,c.UBJ);
+  // knuckle body: LBJ -> spindle boss -> UBJ (boss pushed toward wheel)
+  const boss=c.LBJ.clone().lerp(c.UBJ,0.5).lerp(c.WC,0.32);
+  setRod(v.uprLow,c.LBJ,boss); setRod(v.uprHigh,boss,c.UBJ);
+  // spindle pin: boss out along the spin axis to the hub face; hub disc at WC
+  const hubIn=c.WC.clone().sub(c.spin.clone().multiplyScalar(HP.common.wheelWidth*0.32));
+  setRod(v.pin,boss,c.WC);
+  setRod(v.hub,hubIn,c.WC);
+  setRod(v.arm,boss,c.TRO);
+  setRod(v.tie,c.TRI,c.TRO);
+  v.bjL.position.copy(c.LBJ); v.bjU.position.copy(c.UBJ);
+  v.wheel.position.copy(c.WC); v.wheel.quaternion.setFromUnitVectors(V(0,1,0),c.spin.clone());
+  const sLow=stat.lowArm.point(stat.attSpringLow,c.theta);
+  setLine(v.spring,springPts(sLow,stat.springUpper0,7,2.0,16));
+  const kLow=stat.lowArm.point(stat.attShockLow,c.theta);
+  const mid=kLow.clone().lerp(stat.shockUpper0,0.5);
+  setRod(v.shockBody,kLow,mid); setRod(v.shockShaft,mid,stat.shockUpper0);
+}
+const $=id=>document.getElementById(id);
+function fmt(n,d){return (n>=0?"+":"")+n.toFixed(d);}
+function update(){
+  const tC=$("tConstruct").checked,tT=$("tTrail").checked,tS=$("tSpring").checked,tW=$("tWire").checked;
+  const m=metricsNow();
+  drawCorner(visR,statR,m.cR); drawCorner(visL,statL,m.cL);
+  [visR,visL].forEach(v=>{
+    v.wheel._tire.material.wireframe=tW; v.wheel._rim.material.wireframe=tW;
+    v.spring.visible=tS;v.shockBody.visible=tS;v.shockShaft.visible=tS;});
+  setRod(linkPitman,m.st.Pp,m.st.CLL); setRod(linkIdler,m.st.Pi,m.st.CLR); setRod(linkCenter,m.st.CLL,m.st.CLR);
+  pivPit.position.copy(m.st.Pp); pivIdl.position.copy(m.st.Pi);
+  setLine(frameLines[0],[statR.lowerFront,statL.lowerFront]);
+  setLine(frameLines[1],[statR.lowerRear,statL.lowerRear]);
+  setLine(frameLines[2],[statR.upperFront,statL.upperFront]);
+  setLine(frameLines[3],[statR.upperRear,statL.upperRear]);
+  setLine(frameLines[4],[statR.lowerFront,statR.upperFront]);
+  setLine(frameLines[5],[statL.lowerFront,statL.upperFront]);
+  const showC=tC&&m.rc.rc;
+  visR.swingLine.visible=visL.swingLine.visible=showC;
+  visR.icDot.visible=visL.icDot.visible=!!(m.rc.icR&&m.rc.icL);
+  rcLineR.visible=rcLineL.visible=showC; rcDot.visible=!!m.rc.rc;
+  if(m.rc.icR&&m.rc.icL){
+    const icR=V(0,m.rc.icR[0],m.rc.icR[1]),icL=V(0,m.rc.icL[0],m.rc.icL[1]);
+    visR.icDot.position.copy(icR); visL.icDot.position.copy(icL);
+    if(showC){setLine(visR.swingLine,[V(0,m.cR.CPy,0),icR]); setLine(visL.swingLine,[V(0,m.cL.CPy,0),icL]);}
+  }
+  if(m.rc.rc){
+    const rcP=V(0,m.rc.rc[0],m.rc.rc[1]); rcDot.position.copy(rcP);
+    if(showC&&m.rc.icR&&m.rc.icL){
+      setLine(rcLineR,[V(0,m.cR.CPy,0),V(0,m.rc.icR[0],m.rc.icR[1])]);
+      setLine(rcLineL,[V(0,m.cL.CPy,0),V(0,m.rc.icL[0],m.rc.icL[1])]);
+    }
+    if(tT){const last=trail[trail.length-1];
+      if(!last||Math.hypot(last.y-rcP.y,last.z-rcP.z)>0.05){trail.push(rcP.clone());if(trail.length>120)trail.shift();}
+      setLine(trailLine,trail); trailLine.visible=trail.length>1;
+    } else trailLine.visible=false;
+  }
+  updateHUD(m); drawCharts(m); drawFront(m); render();
+}
+function updateHUD(m){
+  // static alignment (outputs of the assembly)
+  $("sCambL").textContent=fmt(statL.static.camber,2);$("sCambR").textContent=fmt(statR.static.camber,2);
+  $("sCastL").textContent=fmt(statL.static.casterLive,1);$("sCastR").textContent=fmt(statR.static.casterLive,1);
+  $("sToeL").textContent=fmt(toeIn(statL.static.toe),3);$("sToeR").textContent=fmt(toeIn(statR.static.toe),3);
+  $("sTotToe").textContent=fmt(toeIn(statL.static.toe)+toeIn(statR.static.toe),3);
+  // live
+  $("hWtL").textContent=fmt(m.wtL,2);$("hWtR").textContent=fmt(m.wtR,2);
+  $("hStL").textContent=fmt(m.stkL,2);$("hStR").textContent=fmt(m.stkR,2);
+  $("hMrL").textContent=m.mrL.toFixed(2);$("hMrR").textContent=m.mrR.toFixed(2);
+  $("hCambL").textContent=fmt(m.cL.camber,2);$("hCambR").textContent=fmt(m.cR.camber,2);
+  $("hToeL").textContent=fmt(toeIn(m.cL.toe),3);$("hToeR").textContent=fmt(toeIn(m.cR.toe),3);
+  $("hSteerL").textContent=fmt(m.steerL,1);$("hSteerR").textContent=fmt(m.steerR,1);
+  $("hAck").textContent=m.ack===null?"—":m.ack.toFixed(0)+"%";
+  $("hTot").textContent=m.tot===null?"—":m.tot.toFixed(1)+"°";
+  function gainAt(arr,wt){const tv=sweepData.trav;let i=1;
+    while(i<tv.length-1&&tv[i]<wt)i++;return (arr[i]-arr[i-1])/(tv[i]-tv[i-1]);}
+  if(sweepData){
+    $("hGainR").textContent=fmt(gainAt(sweepData.cambR,m.wtR),2);
+    $("hGainL").textContent=fmt(gainAt(sweepData.cambL,m.wtL),2);
+  }
+  $("hCasterR").textContent=fmt(m.cR.casterLive,1);$("hCasterL").textContent=fmt(m.cL.casterLive,1);
+  $("hKpiR").textContent=m.cR.kpiLive.toFixed(1);$("hKpiL").textContent=m.cL.kpiLive.toFixed(1);
+  $("hScrubR").textContent=isFinite(m.cR.scrub)?fmt(m.cR.scrub,2):"—";
+  $("hScrubL").textContent=isFinite(m.cL.scrub)?fmt(m.cL.scrub,2):"—";
+  $("hTrailR").textContent=isFinite(m.cR.trail)?fmt(m.cR.trail,2):"—";
+  $("hTrailL").textContent=isFinite(m.cL.trail)?fmt(m.cL.trail,2):"—";
+  if(m.rc.rc){$("hRcZ").textContent=m.rc.rc[1].toFixed(2)+'"';$("hRcY").textContent=fmt(m.rc.rc[0],2)+'"';}
+  else{$("hRcZ").textContent="—";$("hRcY").textContent="—";}
+  $("vTravL").textContent=fmt(+$("travL").value,2)+" in";
+  $("vTravR").textContent=fmt(+$("travR").value,2)+" in";
+  $("vSteer").textContent=fmt(m.steerA,1)+"°";
+}
+
+function chartMulti(canvasId,xs,series){
+  const cv=$(canvasId),dpr=Math.min(devicePixelRatio,2),w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;const g=cv.getContext("2d");g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  let all=[]; series.forEach(s=>all=all.concat(s.ys.filter(isFinite))); if(!all.length)return;
+  let ymin=Math.min(...all),ymax=Math.max(...all); if(ymin===ymax){ymin-=1;ymax+=1;}
+  const pad=(ymax-ymin)*0.15;ymin-=pad;ymax+=pad;
+  const xmin=xs[0],xmax=xs[xs.length-1];
+  const X=x=>((x-xmin)/(xmax-xmin))*(w-10)+5, Y=y=>h-8-((y-ymin)/(ymax-ymin))*(h-16);
+  g.strokeStyle="#283340";g.lineWidth=1;
+  if(ymin<0&&ymax>0){g.beginPath();g.moveTo(5,Y(0));g.lineTo(w-5,Y(0));g.stroke();}
+  g.beginPath();g.moveTo(X(0),5);g.lineTo(X(0),h-5);g.stroke();
+  series.forEach(s=>{
+    g.strokeStyle=s.color;g.lineWidth=2;g.beginPath();let st=false;
+    for(let i=0;i<xs.length;i++){if(!isFinite(s.ys[i])){st=false;continue;}
+      const px=X(xs[i]),py=Y(s.ys[i]); if(!st){g.moveTo(px,py);st=true;}else g.lineTo(px,py);}
+    g.stroke();
+    if(isFinite(s.markerX)){const mx=X(s.markerX);let my=null;
+      for(let i=1;i<xs.length;i++){if(s.markerX>=xs[i-1]&&s.markerX<=xs[i]&&isFinite(s.ys[i])&&isFinite(s.ys[i-1])){
+        const f=(s.markerX-xs[i-1])/(xs[i]-xs[i-1]);my=Y(s.ys[i-1]+f*(s.ys[i]-s.ys[i-1]));break;}}
+      if(my!==null){g.fillStyle=s.color;g.beginPath();g.arc(mx,my,3.2,0,7);g.fill();}}
+  });
+}
+function range(a){const v=a.filter(isFinite);return v.length?(Math.max(...v)-Math.min(...v)):0;}
+function drawCharts(m){
+  if(!sweepData)return; const tv=sweepData.trav;
+  chartMulti("chCamb",tv,[
+    {ys:sweepData.cambR,color:"#ff6a1f",markerX:m.wtR},
+    {ys:sweepData.cambL,color:"#36c2ff",markerX:m.wtL}]);
+  chartMulti("chToe",tv,[
+    {ys:sweepData.toeR.map(toeIn),color:"#ff6a1f",markerX:m.wtR},
+    {ys:sweepData.toeL.map(toeIn),color:"#36c2ff",markerX:m.wtL}]);
+  chartMulti("chRc",tv,[{ys:sweepData.rcz,color:"#ffd23f",markerX:(m.wtR+m.wtL)/2}]);
+  $("cCamb").textContent="R "+range(sweepData.cambR).toFixed(2)+"° / L "+range(sweepData.cambL).toFixed(2)+"°";
+  $("cToe").textContent="R "+range(sweepData.toeR.map(toeIn)).toFixed(3)+'" / L '+range(sweepData.toeL.map(toeIn)).toFixed(3)+'"';
+  $("cRc").textContent=range(sweepData.rcz).toFixed(2)+'" travel';
+}
+/* 2D front-view roll-center construction */
+function drawFront(m){
+  const on=$("tFront").checked, box=$("fv");
+  box.style.display=on?"block":"none"; if(!on)return;
+  const cv=$("fvCanvas"),dpr=Math.min(devicePixelRatio,2),w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;const g=cv.getContext("2d");g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  const yMax=Math.max(Math.abs(m.cR.WC.y),Math.abs(m.cL.WC.y))+HP.common.wheelWidth/2+4;
+  const zMax=Math.max(statR.UBJ0.z,statL.UBJ0.z,m.rc.rc?m.rc.rc[1]:0,HP.common.wheelRadius*2)+3, zMin=-2.5;
+  const s=Math.min((w-16)/(2*yMax),(h-14)/(zMax-zMin));
+  const X=y=>w/2+y*s, Y=z=>h-8-(z-zMin)*s;
+  function seg(y1,z1,y2,z2,col,width,dash){g.strokeStyle=col;g.lineWidth=width;
+    g.setLineDash(dash||[]);g.beginPath();g.moveTo(X(y1),Y(z1));g.lineTo(X(y2),Y(z2));g.stroke();g.setLineDash([]);}
+  function pt(y,z,col,r){g.fillStyle=col;g.beginPath();g.arc(X(y),Y(z),r,0,7);g.fill();}
+  seg(-yMax,0,yMax,0,"#3a4654",1.5);
+  seg(0,zMin,0,zMax,"#283340",1,[4,4]);
+  const sides=[{c:m.cR,st:statR,col:"#ff6a1f",ic:m.rc.icR},{c:m.cL,st:statL,col:"#36c2ff",ic:m.rc.icL}];
+  sides.forEach(sd=>{
+    const lm={y:(sd.st.lowerFront.y+sd.st.lowerRear.y)/2,z:(sd.st.lowerFront.z+sd.st.lowerRear.z)/2};
+    const um={y:(sd.st.upperFront.y+sd.st.upperRear.y)/2,z:(sd.st.upperFront.z+sd.st.upperRear.z)/2};
+    const tw=HP.common.wheelWidth/2;
+    g.strokeStyle=sd.col;g.lineWidth=1;
+    g.strokeRect(X(sd.c.WC.y-tw),Y(sd.c.WC.z+HP.common.wheelRadius),2*tw*s,2*HP.common.wheelRadius*s);
+    seg(lm.y,lm.z,sd.c.LBJ.y,sd.c.LBJ.z,sd.col,2);
+    seg(um.y,um.z,sd.c.UBJ.y,sd.c.UBJ.z,sd.col,2);
+    seg(sd.c.LBJ.y,sd.c.LBJ.z,sd.c.UBJ.y,sd.c.UBJ.z,sd.col,1.2);
+    pt(sd.c.LBJ.y,sd.c.LBJ.z,"#ff5d6c",2.5);pt(sd.c.UBJ.y,sd.c.UBJ.z,"#ff5d6c",2.5);
+    if(sd.ic){
+      seg(sd.c.LBJ.y,sd.c.LBJ.z,sd.ic[0],sd.ic[1],"#7a8aa0",0.8,[5,4]);
+      seg(sd.c.UBJ.y,sd.c.UBJ.z,sd.ic[0],sd.ic[1],"#7a8aa0",0.8,[5,4]);
+      seg(sd.c.CPy,0,sd.ic[0],sd.ic[1],sd.col,0.9,[2,3]);
+      pt(sd.ic[0],sd.ic[1],"#7a8aa0",3);
+    }
+  });
+  if(m.rc.rc){pt(m.rc.rc[0],m.rc.rc[1],"#ffd23f",4);
+    g.strokeStyle="#ffd23f";g.lineWidth=1;g.beginPath();g.arc(X(m.rc.rc[0]),Y(m.rc.rc[1]),6.5,0,7);g.stroke();}
+  const fvsa=(ic,cpy)=>ic?Math.hypot(ic[0]-cpy,ic[1]).toFixed(1):"—";
+  $("fvInfo").textContent="FVSA  R "+fvsa(m.rc.icR,m.cR.CPy)+'"   L '+fvsa(m.rc.icL,m.cL.CPy)+'"'
+    +(m.rc.rc?("    RC  y "+fmt(m.rc.rc[0],2)+'"  z '+m.rc.rc[1].toFixed(2)+'"'):"    RC —");
+}
+
+/* ============================================================ CAMERA */
+let camR=98,camTheta=-0.9,camPhi=1.15,target=V(0,0,9);
+function placeCam(){const x=target.x+camR*Math.sin(camPhi)*Math.cos(camTheta),
+  y=target.y+camR*Math.sin(camPhi)*Math.sin(camTheta),z=target.z+camR*Math.cos(camPhi);
+  camera.position.set(x,y,z);camera.up.set(0,0,1);camera.lookAt(target);}
+function render(){renderer.render(scene,camera);}
+let drag=null;
+renderer.domElement.addEventListener("mousedown",e=>drag={x:e.clientX,y:e.clientY,b:e.button});
+window.addEventListener("mouseup",()=>drag=null);
+window.addEventListener("mousemove",e=>{if(!drag)return;
+  const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
+  if(drag.b===2){const right=V(Math.sin(camTheta),-Math.cos(camTheta),0);
+    target.add(right.multiplyScalar(-dx*camR*0.0012)).add(V(0,0,1).multiplyScalar(dy*camR*0.0012));}
+  else{camTheta-=dx*0.008;camPhi=Math.max(0.15,Math.min(Math.PI-0.15,camPhi-dy*0.008));}
+  placeCam();render();});
+renderer.domElement.addEventListener("wheel",e=>{e.preventDefault();
+  camR=Math.max(30,Math.min(300,camR*(1+Math.sign(e.deltaY)*0.08)));placeCam();render();},{passive:false});
+renderer.domElement.addEventListener("contextmenu",e=>e.preventDefault());
+let tcache=[];
+renderer.domElement.addEventListener("touchstart",e=>{tcache=[...e.touches];},{passive:false});
+renderer.domElement.addEventListener("touchmove",e=>{e.preventDefault();
+  if(e.touches.length===1&&tcache.length===1){const dx=e.touches[0].clientX-tcache[0].clientX,dy=e.touches[0].clientY-tcache[0].clientY;
+    camTheta-=dx*0.008;camPhi=Math.max(0.15,Math.min(Math.PI-0.15,camPhi-dy*0.008));placeCam();render();}
+  else if(e.touches.length===2&&tcache.length===2){
+    const d0=Math.hypot(tcache[0].clientX-tcache[1].clientX,tcache[0].clientY-tcache[1].clientY);
+    const d1=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    camR=Math.max(30,Math.min(300,camR*(d0/d1)));placeCam();render();}
+  tcache=[...e.touches];},{passive:false});
+
+/* ============================================================ FORM BUILD */
+function pointInputs(scope,key){
+  const arr = scope==='common'?HP.common[key]:HP[scope][key];
+  const yDisp = (scope==='L') ? -arr[1] : arr[1];
+  const ylab = scope==='common' ? 'y' : 'out';
+  return '<div class="xyz">'
+    +'<div class="f"><i>x</i><input type="number" step="0.1" data-scope="'+scope+'" data-key="'+key+'" data-ax="0" value="'+arr[0]+'"></div>'
+    +'<div class="f"><i>'+ylab+'</i><input type="number" step="0.1" data-scope="'+scope+'" data-key="'+key+'" data-ax="1" value="'+yDisp+'"></div>'
+    +'<div class="f"><i>z</i><input type="number" step="0.1" data-scope="'+scope+'" data-key="'+key+'" data-ax="2" value="'+arr[2]+'"></div>'
+    +'</div>';
+}
+function buildForm(){
+  let h="";
+  h+='<div class="subhead">Vehicle</div>'
+    +'<div class="numrow">'
+    +'<div class="nf"><label>Wheelbase</label><input type="number" step="0.5" data-num="wheelbase" value="'+HP.common.wheelbase+'"></div>'
+    +'<div class="nf"><label>Tire radius</label><input type="number" step="0.25" data-num="wheelRadius" value="'+HP.common.wheelRadius+'"></div>'
+    +'<div class="nf"><label>Tire width</label><input type="number" step="0.25" data-num="wheelWidth" value="'+HP.common.wheelWidth+'"></div>'
+    +'</div>'
+    +'<div class="numrow"><div class="nf"><label>Toe gauge dia (in) — measure toe across this</label><input type="number" step="0.5" data-num="toeGaugeDia" value="'+HP.common.toeGaugeDia+'"></div></div>';
+  ['R','L'].forEach(side=>{
+    h+='<div class="subhead '+side+'">'+(side==='R'?'Right':'Left')+' corner</div>';
+    h+='<div class="numrow">'
+      +'<div class="nf"><label>Measured camber °</label><input type="number" step="0.1" data-cnum="'+side+'" data-ckey="measCamber" value="'+HP[side].measCamber+'"></div>'
+      +'<div class="nf"><label>Measured toe (in)</label><input type="number" step="0.005" data-cnum="'+side+'" data-ckey="measToe" value="'+HP[side].measToe+'"></div>'
+      +'</div>';
+    CORNER_PTS.forEach(function(pt){ h+='<div class="ptrow"><div class="pl">'+pt[1]+'</div>'+pointInputs(side,pt[0])+'</div>'; });
+  });
+  h+='<div class="subhead">Steering linkage (y from center, + = right)</div>';
+  STEER_PTS.forEach(function(pt){ h+='<div class="ptrow"><div class="pl">'+pt[1]+'</div>'+pointInputs('common',pt[0])+'</div>'; });
+  $("hpForm").innerHTML=h;
+  $("hpForm").querySelectorAll("input[data-key]").forEach(function(inp){
+    inp.addEventListener("input",function(){
+      const sc=inp.dataset.scope,k=inp.dataset.key,ax=+inp.dataset.ax;let val=parseFloat(inp.value);
+      if(!isFinite(val))return;
+      if(ax===1&&sc==='L')val=-val;
+      if(sc==='common')HP.common[k][ax]=val; else HP[sc][k][ax]=val;
+      recomputeStatics();update();
+    });
+  });
+  $("hpForm").querySelectorAll("input[data-num]").forEach(function(inp){
+    inp.addEventListener("input",function(){const v=parseFloat(inp.value);if(!isFinite(v))return;
+      HP.common[inp.dataset.num]=v;recomputeStatics();update();});
+  });
+  $("hpForm").querySelectorAll("input[data-cnum]").forEach(function(inp){
+    inp.addEventListener("input",function(){const v=parseFloat(inp.value);if(!isFinite(v))return;
+      HP[inp.dataset.cnum][inp.dataset.ckey]=v;recomputeStatics();update();});
+  });
+}
+function syncAdjInputs(){
+  document.querySelectorAll("input[data-adj]").forEach(function(inp){
+    inp.value=HP[inp.dataset.adj].adj[inp.dataset.akey];
+  });
+}
+
+/* ============================================================ UI WIRING */
+document.querySelectorAll("input[data-adj]").forEach(function(inp){
+  inp.addEventListener("input",function(){
+    const v=parseFloat(inp.value); if(!isFinite(v))return;
+    HP[inp.dataset.adj].adj[inp.dataset.akey]=v;
+    recomputeStatics();update();
+  });
+});
+$("adjZero").addEventListener("click",function(){
+  ['R','L'].forEach(s=>{HP[s].adj={uio:0,uud:0,ucs:0,lio:0,lud:0,tie:0,lal:0,ual:0};});
+  syncAdjInputs();recomputeStatics();update();
+});
+$("modeSeg").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+  $("modeSeg").querySelectorAll("button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); mode=b.dataset.mode;
+  const lab=mode==="wheel"?"wheel":"shock"; $("lblL").textContent=lab;$("lblR").textContent=lab;
+  update();
+}));
+function travInput(which){
+  if($("lock").checked){const v=$( which==='L'?'travL':'travR').value;$("travL").value=v;$("travR").value=v;}
+  update();
+}
+$("travL").addEventListener("input",()=>travInput('L'));
+$("travR").addEventListener("input",()=>travInput('R'));
+$("steer").addEventListener("input",update);
+["tConstruct","tTrail","tSpring","tWire","tFront"].forEach(id=>{const el=$(id);
+  el.addEventListener("change",()=>{el.closest(".tg").classList.toggle("on",el.checked);
+    if(id==="tTrail"&&!el.checked)trail=[];update();});});
+$("recenter").addEventListener("click",()=>{camR=98;camTheta=-0.9;camPhi=1.15;target=V(0,0,9);placeCam();render();});
+$("zeroInputs").addEventListener("click",()=>{["travL","travR","steer"].forEach(id=>$(id).value=0);trail=[];update();});
+$("hpHead").addEventListener("click",()=>{$("hpBody").classList.toggle("open");
+  $("hpChev").textContent=$("hpBody").classList.contains("open")?"▾ close":"▸ edit";});
+$("hpMirror").addEventListener("click",()=>{HP.L=mirrorCorner(HP.R);buildForm();syncAdjInputs();recomputeStatics();update();});
+$("hpReset").addEventListener("click",()=>{HP=JSON.parse(JSON.stringify(HP_DEFAULT));buildForm();syncAdjInputs();dumpJson();recomputeStatics();update();});
+function dumpJson(){$("hpJson").value=JSON.stringify(HP,null,1);$("hpErr").textContent="";}
+$("hpDump").addEventListener("click",dumpJson);
+function applyHP(o){
+  const defAdj={uio:0,uud:0,ucs:0,lio:0,lud:0,tie:0,lal:0,ual:0};
+  HP={common:Object.assign(JSON.parse(JSON.stringify(HP_DEFAULT.common)),o.common||{}),
+      R:Object.assign(JSON.parse(JSON.stringify(R_DEF)),o.R||{}),
+      L:Object.assign(JSON.parse(JSON.stringify(mirrorCorner(R_DEF))),o.L||{})};
+  HP.R.adj=Object.assign({},defAdj,(o.R&&o.R.adj)||{});
+  HP.L.adj=Object.assign({},defAdj,(o.L&&o.L.adj)||{});
+}
+function gatherUI(){return {mode,lock:$("lock").checked,
+  travL:+$("travL").value,travR:+$("travR").value,steer:+$("steer").value,
+  tConstruct:$("tConstruct").checked,tTrail:$("tTrail").checked,tSpring:$("tSpring").checked,tWire:$("tWire").checked,tFront:$("tFront").checked};}
+function applyUI(ui){
+  if(!ui)return;
+  if(ui.mode){mode=ui.mode;
+    $("modeSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.mode===mode));
+    const lab=mode==="wheel"?"wheel":"shock";$("lblL").textContent=lab;$("lblR").textContent=lab;}
+  if(ui.lock!==undefined)$("lock").checked=ui.lock;
+  ["travL","travR","steer"].forEach(k=>{if(ui[k]!==undefined)$(k).value=ui[k];});
+  ["tConstruct","tTrail","tSpring","tWire","tFront"].forEach(k=>{if(ui[k]!==undefined){
+    $(k).checked=ui[k];$(k).closest(".tg").classList.toggle("on",ui[k]);}});
+}
+$("hpApply").addEventListener("click",()=>{try{
+  applyHP(JSON.parse($("hpJson").value));
+  $("hpErr").textContent="";buildForm();syncAdjInputs();dumpJson();recomputeStatics();update();
+}catch(err){$("hpErr").textContent="JSON error: "+err.message;}});
+function saveSetup(){
+  const data={app:"sla-suspension-sim",version:4,saved:new Date().toISOString(),HP,ui:gatherUI()};
+  const blob=new Blob([JSON.stringify(data,null,1)],{type:"application/json"});
+  const url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download="suspension-setup.json";document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},150);
+}
+function loadSetupData(data){
+  const o=data.HP?data.HP:data;
+  applyHP(o);buildForm();syncAdjInputs();dumpJson();recomputeStatics();
+  if(data.ui)applyUI(data.ui);
+  trail=[];update();$("hpErr").textContent="";
+}
+$("hpSave").addEventListener("click",saveSetup);
+$("hpLoad").addEventListener("click",()=>$("loadFile").click());
+$("loadFile").addEventListener("change",e=>{const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{try{loadSetupData(JSON.parse(r.result));}catch(err){$("hpErr").textContent="Load error: "+err.message;}};
+  r.readAsText(f);e.target.value="";});
+
+function resize(){camera.aspect=host.clientWidth/host.clientHeight;camera.updateProjectionMatrix();
+  renderer.setSize(host.clientWidth,host.clientHeight);if(statR)update();else render();}
+window.addEventListener("resize",resize);
+
+/* boot */
+buildForm(); syncAdjInputs(); dumpJson(); recomputeStatics(); placeCam(); update();
+})();
+</script>
+</body>
+</html>

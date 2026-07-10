@@ -1,0 +1,315 @@
+/*
+ * CLR Suspension Builder — app shell. Owns the parts + setup state, re-solves
+ * the assembly on every wrench turn, and feeds the 3D scene / HUD / charts /
+ * front view. Alignment is an output everywhere.
+ */
+import './style.css';
+import { FrontEnd, Setup, Side } from './core/parts';
+import { FrontAssembly, assembleFront } from './core/trim';
+import {
+  FrontState, SweepData, TravelMode, computeSweep, gainAt, solveFrontState, toeInches,
+} from './core/metrics';
+import { calibrateSpindle } from './core/calibrate';
+import { defaultState, loadStateJSON, serializeState } from './state/setup';
+import { Scene3D } from './ui/scene3d';
+import { chartMulti, seriesRange } from './ui/charts';
+import { drawFrontView } from './ui/frontview';
+import { buildPartsForm } from './ui/panels';
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const fmt = (n: number, d: number) => (n >= 0 ? '+' : '') + n.toFixed(d);
+
+/* ---------------- state ---------------- */
+let { front, setup } = defaultState() as { front: FrontEnd; setup: Setup };
+let fa: FrontAssembly | null = null;
+let sweep: SweepData | null = null;
+let mode: TravelMode = 'wheel';
+
+const scene = new Scene3D($('scene'));
+
+function rebuild(): void {
+  try {
+    fa = assembleFront(front, setup);
+    sweep = computeSweep(fa);
+    $('asmErr').style.display = 'none';
+  } catch (err) {
+    // keep the last good assembly on screen so the user can back out
+    $('asmErr').textContent = 'ASSEMBLY: ' + (err as Error).message;
+    $('asmErr').style.display = 'block';
+  }
+  scene.clearTrail();
+  syncLegLengths();
+  update();
+}
+
+function inputs() {
+  return {
+    travL: +($('travL') as HTMLInputElement).value,
+    travR: +($('travR') as HTMLInputElement).value,
+    steerDeg: +($('steer') as HTMLInputElement).value,
+    mode,
+  };
+}
+
+function toggles() {
+  const on = (id: string) => ($(id) as HTMLInputElement).checked;
+  return { construct: on('tConstruct'), trail: on('tTrail'), spring: on('tSpring'), wire: on('tWire') };
+}
+
+function update(): void {
+  if (!fa) return;
+  const m = solveFrontState(fa, front.chassis.wheelbase, inputs());
+  scene.update(fa, m, toggles());
+  updateHUD(m);
+  drawCharts(m);
+  const fvOn = ($('tFront') as HTMLInputElement).checked;
+  $('fv').style.display = fvOn ? 'block' : 'none';
+  if (fvOn) drawFrontView($('fvCanvas') as HTMLCanvasElement, $('fvInfo'), fa, m);
+}
+
+/* ---------------- HUD ---------------- */
+function updateHUD(m: FrontState): void {
+  if (!fa) return;
+  const gd = setup.toeGaugeDia;
+  const sR = fa.statR.static!, sL = fa.statL.static!;
+  $('sCambL').textContent = fmt(sL.camber, 2); $('sCambR').textContent = fmt(sR.camber, 2);
+  $('sCastL').textContent = fmt(sL.casterLive, 1); $('sCastR').textContent = fmt(sR.casterLive, 1);
+  $('sToeL').textContent = fmt(toeInches(sL.toe, gd), 3); $('sToeR').textContent = fmt(toeInches(sR.toe, gd), 3);
+  $('sTotToe').textContent = fmt(toeInches(sL.toe, gd) + toeInches(sR.toe, gd), 3);
+  $('sTrack').textContent = (sR.WC.y - sL.WC.y).toFixed(2) + '"';
+  $('hWtL').textContent = fmt(m.wtL, 2); $('hWtR').textContent = fmt(m.wtR, 2);
+  $('hStL').textContent = fmt(m.stkL, 2); $('hStR').textContent = fmt(m.stkR, 2);
+  $('hMrL').textContent = m.mrL.toFixed(2); $('hMrR').textContent = m.mrR.toFixed(2);
+  $('hCambL').textContent = fmt(m.cL.camber, 2); $('hCambR').textContent = fmt(m.cR.camber, 2);
+  $('hToeL').textContent = fmt(toeInches(m.cL.toe, gd), 3); $('hToeR').textContent = fmt(toeInches(m.cR.toe, gd), 3);
+  $('hSteerL').textContent = fmt(m.steerL, 1); $('hSteerR').textContent = fmt(m.steerR, 1);
+  $('hAck').textContent = m.ack === null ? '—' : m.ack.toFixed(0) + '%';
+  $('hTot').textContent = m.tot === null ? '—' : m.tot.toFixed(1) + '°';
+  if (sweep) {
+    $('hGainR').textContent = fmt(gainAt(sweep, sweep.cambR, m.wtR), 2);
+    $('hGainL').textContent = fmt(gainAt(sweep, sweep.cambL, m.wtL), 2);
+  }
+  $('hCasterR').textContent = fmt(m.cR.casterLive, 1); $('hCasterL').textContent = fmt(m.cL.casterLive, 1);
+  $('hKpiR').textContent = m.cR.kpiLive.toFixed(1); $('hKpiL').textContent = m.cL.kpiLive.toFixed(1);
+  $('hScrubR').textContent = isFinite(m.cR.scrub) ? fmt(m.cR.scrub, 2) : '—';
+  $('hScrubL').textContent = isFinite(m.cL.scrub) ? fmt(m.cL.scrub, 2) : '—';
+  $('hTrailR').textContent = isFinite(m.cR.trail) ? fmt(m.cR.trail, 2) : '—';
+  $('hTrailL').textContent = isFinite(m.cL.trail) ? fmt(m.cL.trail, 2) : '—';
+  if (m.rc.rc) {
+    $('hRcZ').textContent = m.rc.rc[1].toFixed(2) + '"';
+    $('hRcY').textContent = fmt(m.rc.rc[0], 2) + '"';
+  } else { $('hRcZ').textContent = '—'; $('hRcY').textContent = '—'; }
+  $('vTravL').textContent = fmt(+($('travL') as HTMLInputElement).value, 2) + ' in';
+  $('vTravR').textContent = fmt(+($('travR') as HTMLInputElement).value, 2) + ' in';
+  $('vSteer').textContent = fmt(m.steerA, 1) + '°';
+}
+
+function drawCharts(m: FrontState): void {
+  if (!sweep) return;
+  const gd = setup.toeGaugeDia;
+  const tv = sweep.trav;
+  chartMulti($('chCamb') as HTMLCanvasElement, tv, [
+    { ys: sweep.cambR, color: '#ff6a1f', markerX: m.wtR },
+    { ys: sweep.cambL, color: '#36c2ff', markerX: m.wtL },
+  ]);
+  chartMulti($('chToe') as HTMLCanvasElement, tv, [
+    { ys: sweep.toeR.map((d) => toeInches(d, gd)), color: '#ff6a1f', markerX: m.wtR },
+    { ys: sweep.toeL.map((d) => toeInches(d, gd)), color: '#36c2ff', markerX: m.wtL },
+  ]);
+  chartMulti($('chRc') as HTMLCanvasElement, tv, [
+    { ys: sweep.rcz, color: '#ffd23f', markerX: (m.wtR + m.wtL) / 2 },
+  ]);
+  $('cCamb').textContent = 'R ' + seriesRange(sweep.cambR).toFixed(2) + '° / L ' + seriesRange(sweep.cambL).toFixed(2) + '°';
+  $('cToe').textContent = 'R ' + seriesRange(sweep.toeR.map((d) => toeInches(d, gd))).toFixed(3) + '" / L '
+    + seriesRange(sweep.toeL.map((d) => toeInches(d, gd))).toFixed(3) + '"';
+  $('cRc').textContent = seriesRange(sweep.rcz).toFixed(2) + '" travel';
+}
+
+/* ---------------- adjustments in turns ---------------- */
+function syncAdjInputs(): void {
+  document.querySelectorAll<HTMLInputElement>('input[data-turn]').forEach((inp) => {
+    const c = setup.corners[inp.dataset.turn as Side];
+    const k = inp.dataset.tkey!;
+    inp.value = String(k === 'hf' ? c.heimTurnsFront : k === 'hr' ? c.heimTurnsRear : c.tieRodTurns);
+  });
+  document.querySelectorAll<HTMLInputElement>('input[data-slug]').forEach((inp) => {
+    inp.value = String(setup.corners[inp.dataset.slug as Side].slugs[inp.dataset.skey as keyof typeof setup.corners.R.slugs]);
+  });
+  document.querySelectorAll<HTMLInputElement>('input[data-cal]').forEach((inp) => {
+    const m = setup.measured[inp.dataset.cal as Side];
+    inp.value = String(inp.dataset.ckey === 'camber' ? m.camberDeg : m.toeIn);
+  });
+}
+
+function syncLegLengths(): void {
+  const el = $('legLens');
+  const leg = (side: Side) => {
+    const ua = front.corners[side].upperArm, c = setup.corners[side];
+    const tr = front.corners[side].tieRod;
+    return `<b>${side}</b> legs ${(ua.legFront.baseLength + c.heimTurnsFront / ua.legFront.heimPitchTPI).toFixed(3)}"`
+      + ` / ${(ua.legRear.baseLength + c.heimTurnsRear / ua.legRear.heimPitchTPI).toFixed(3)}"`
+      + ` · tie ${(tr.baseLength + c.tieRodTurns / tr.sleevePitchTPI).toFixed(3)}"`;
+  };
+  el.innerHTML = 'Effective lengths — ' + leg('L') + ' &nbsp; ' + leg('R');
+}
+
+document.querySelectorAll<HTMLInputElement>('input[data-turn]').forEach((inp) => {
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value);
+    if (!isFinite(v)) return;
+    const c = setup.corners[inp.dataset.turn as Side];
+    if (inp.dataset.tkey === 'hf') c.heimTurnsFront = v;
+    else if (inp.dataset.tkey === 'hr') c.heimTurnsRear = v;
+    else c.tieRodTurns = v;
+    rebuild();
+  });
+});
+document.querySelectorAll<HTMLInputElement>('input[data-slug]').forEach((inp) => {
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value);
+    if (!isFinite(v)) return;
+    setup.corners[inp.dataset.slug as Side].slugs[inp.dataset.skey as keyof typeof setup.corners.R.slugs] = v;
+    rebuild();
+  });
+});
+$('adjZero').addEventListener('click', () => {
+  (['R', 'L'] as Side[]).forEach((s) => {
+    const c = setup.corners[s];
+    c.heimTurnsFront = 0; c.heimTurnsRear = 0; c.tieRodTurns = 0;
+    c.slugs = { uio: 0, uud: 0, ucs: 0, lio: 0, lud: 0 };
+  });
+  syncAdjInputs(); rebuild();
+});
+
+/* ---------------- calibration ---------------- */
+document.querySelectorAll<HTMLInputElement>('input[data-cal]').forEach((inp) => {
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value);
+    if (!isFinite(v)) return;
+    const m = setup.measured[inp.dataset.cal as Side];
+    if (inp.dataset.ckey === 'camber') m.camberDeg = v; else m.toeIn = v;
+  });
+});
+$('calBtn').addEventListener('click', () => {
+  try {
+    (['R', 'L'] as Side[]).forEach((s) => {
+      front.corners[s].spindle = calibrateSpindle(
+        front, setup, s, setup.measured[s].camberDeg, setup.measured[s].toeIn,
+      );
+    });
+    $('calMsg').textContent = '';
+    rebuildForm(); rebuild();
+    $('calMsg').style.color = 'var(--good)';
+    $('calMsg').textContent = 'spindles calibrated — pin stored on the part';
+  } catch (err) {
+    $('calMsg').style.color = 'var(--bad)';
+    $('calMsg').textContent = (err as Error).message;
+  }
+});
+
+/* ---------------- motion controls ---------------- */
+$('modeSeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+  $('modeSeg').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+  b.classList.add('on');
+  mode = (b as HTMLElement).dataset.mode as TravelMode;
+  const lab = mode === 'wheel' ? 'wheel' : 'shock';
+  $('lblL').textContent = lab; $('lblR').textContent = lab;
+  update();
+}));
+function travInput(which: Side): void {
+  if (($('lock') as HTMLInputElement).checked) {
+    const v = ($(which === 'L' ? 'travL' : 'travR') as HTMLInputElement).value;
+    ($('travL') as HTMLInputElement).value = v;
+    ($('travR') as HTMLInputElement).value = v;
+  }
+  update();
+}
+$('travL').addEventListener('input', () => travInput('L'));
+$('travR').addEventListener('input', () => travInput('R'));
+$('steer').addEventListener('input', update);
+['tConstruct', 'tTrail', 'tSpring', 'tWire', 'tFront'].forEach((id) => {
+  const el = $(id) as HTMLInputElement;
+  el.addEventListener('change', () => {
+    el.closest('.tg')!.classList.toggle('on', el.checked);
+    if (id === 'tTrail' && !el.checked) scene.clearTrail();
+    update();
+  });
+});
+$('recenter').addEventListener('click', () => { scene.resetView(); scene.render(); });
+$('zeroInputs').addEventListener('click', () => {
+  ['travL', 'travR', 'steer'].forEach((id) => { ($(id) as HTMLInputElement).value = '0'; });
+  scene.clearTrail(); update();
+});
+
+/* ---------------- parts form ---------------- */
+function rebuildForm(): void {
+  buildPartsForm($('hpForm'), { front, setup }, () => { rebuildForm(); rebuild(); });
+}
+$('hpHead').addEventListener('click', () => {
+  $('hpBody').classList.toggle('open');
+  $('hpChev').textContent = $('hpBody').classList.contains('open') ? '▾ close' : '▸ edit';
+});
+$('hpMirror').addEventListener('click', () => {
+  const mirror = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
+  const R = front.chassis.sides.R;
+  front.chassis.sides.L = mirror(R);
+  (Object.keys(front.chassis.sides.L) as (keyof typeof R)[]).forEach((k) => {
+    front.chassis.sides.L[k] = [R[k][0], -R[k][1], R[k][2]];
+  });
+  front.corners.L = mirror(front.corners.R);   // part specs are side-symmetric
+  setup.corners.L = mirror(setup.corners.R);
+  setup.measured.L = mirror(setup.measured.R);
+  rebuildForm(); syncAdjInputs(); rebuild();
+});
+$('hpReset').addEventListener('click', () => {
+  ({ front, setup } = defaultState());
+  rebuildForm(); syncAdjInputs(); rebuild();
+});
+
+/* ---------------- save / load ---------------- */
+$('hpSave').addEventListener('click', () => {
+  const ui = {
+    mode,
+    lock: ($('lock') as HTMLInputElement).checked,
+    travL: +($('travL') as HTMLInputElement).value,
+    travR: +($('travR') as HTMLInputElement).value,
+    steer: +($('steer') as HTMLInputElement).value,
+  };
+  const blob = new Blob([serializeState(front, setup, ui)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'clr-suspension-setup.json';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 150);
+});
+$('hpLoad').addEventListener('click', () => $('loadFile').click());
+$('loadFile').addEventListener('change', (e) => {
+  const f = (e.target as HTMLInputElement).files?.[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const loaded = loadStateJSON(String(r.result));
+      front = loaded.front; setup = loaded.setup;
+      const ui = loaded.ui as Record<string, number | boolean | string> | undefined;
+      if (ui) {
+        if (typeof ui.travL === 'number') ($('travL') as HTMLInputElement).value = String(ui.travL);
+        if (typeof ui.travR === 'number') ($('travR') as HTMLInputElement).value = String(ui.travR);
+        if (typeof ui.steer === 'number') ($('steer') as HTMLInputElement).value = String(ui.steer);
+      }
+      $('hpErr').textContent = '';
+      rebuildForm(); syncAdjInputs(); rebuild();
+    } catch (err) {
+      $('hpErr').textContent = 'Load error: ' + (err as Error).message;
+    }
+  };
+  r.readAsText(f);
+  (e.target as HTMLInputElement).value = '';
+});
+
+window.addEventListener('resize', () => { scene.resize(); update(); });
+
+/* boot */
+rebuildForm();
+syncAdjInputs();
+rebuild();
