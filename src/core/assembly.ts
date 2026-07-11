@@ -246,6 +246,93 @@ export function upperBJAttachment(
   return { a0: a, r0 };
 }
 
+/* ============================================================ DIAGNOSTICS
+ * When a corner won't assemble, the racer needs to SEE the mismatch, not a
+ * dead end: what the arms can reach vs what the spindle needs, in inches.
+ */
+export interface CornerDiagnostics {
+  side: Side;
+  ok: boolean;
+  error?: string;
+  spindleHeight: number;
+  legFront: number;
+  legRear: number;
+  reachMin?: number;   // |UBJ(φ) − LBJ0| over the solver's φ range
+  reachMax?: number;
+  LBJ0?: Vec3;
+  UBJ0?: Vec3;         // UBJ at the φ that comes closest to the spindle height
+  pickups?: { lowerFront: Vec3; lowerRear: Vec3; upperFront: Vec3; upperRear: Vec3 };
+}
+
+export function cornerDiagnostics(
+  chassis: Chassis, parts: CornerParts, setup: Setup, side: Side,
+): CornerDiagnostics {
+  const corner = setup.corners[side];
+  const h = parts.spindle.height;
+  const legFront = effectiveLegLength(parts.upperArm.legFront, corner.heimTurnsFront);
+  const legRear = effectiveLegLength(parts.upperArm.legRear, corner.heimTurnsRear);
+  const base = { side, spindleHeight: h, legFront, legRear };
+  try {
+    const pts = chassisSidePoints(chassis.sides[side], setup, corner, side);
+    const lowArm = makeRigidArm(pts.lowerFront, pts.lowerRear, side);
+    const upArm = makeRigidArm(pts.upperFront, pts.upperRear, side);
+    const la = parts.lowerArm;
+    const attLBJ = seatAttachment(lowArm, { axial: la.bjAxial, radial: la.length, drop: la.bjDrop });
+    const LBJ0 = lowArm.point(attLBJ, 0);
+    const pickups = {
+      lowerFront: pts.lowerFront, lowerRear: pts.lowerRear,
+      upperFront: pts.upperFront, upperRear: pts.upperRear,
+    };
+    let attUBJ: ArmAttachment;
+    try {
+      attUBJ = upperBJAttachment(
+        upArm, pts.upperFront.distanceTo(pts.upperRear), legFront, legRear, parts.upperArm.bjDrop,
+      );
+    } catch (e) {
+      return { ...base, ok: false, LBJ0, pickups, error: (e as Error).message };
+    }
+    let reachMin = Infinity, reachMax = -Infinity, bestPhi = 0, bestErr = Infinity;
+    for (let i = 0; i <= 48; i++) {
+      const phi = -0.9 + (1.8 * i) / 48;
+      const d = upArm.point(attUBJ, phi).distanceTo(LBJ0);
+      if (d < reachMin) reachMin = d;
+      if (d > reachMax) reachMax = d;
+      if (Math.abs(d - h) < bestErr) { bestErr = Math.abs(d - h); bestPhi = phi; }
+    }
+    const ok = h >= reachMin - 1e-3 && h <= reachMax + 1e-3;
+    return {
+      ...base, ok, LBJ0, pickups,
+      reachMin, reachMax, UBJ0: upArm.point(attUBJ, bestPhi),
+      error: ok ? undefined
+        : `spindle ${h.toFixed(2)}" vs arm reach ${reachMin.toFixed(2)}"–${reachMax.toFixed(2)}" `
+          + `(${h > reachMax ? (h - reachMax).toFixed(2) + '" too tall' : (reachMin - h).toFixed(2) + '" too short'})`,
+    };
+  } catch (e) {
+    return { ...base, ok: false, error: (e as Error).message };
+  }
+}
+
+/**
+ * Smallest equal change to both upper leg base lengths that lets the corner
+ * assemble at reference (per-corner only — trim/steering judged separately).
+ */
+export function fitUpperLegsToSpindle(
+  chassis: Chassis, parts: CornerParts, setup: Setup, side: Side, maxDelta = 6,
+): number | null {
+  for (let i = 0; i <= Math.round(maxDelta / 0.05); i++) {
+    for (const d of i === 0 ? [0] : [i * 0.05, -i * 0.05]) {
+      const trial: CornerParts = JSON.parse(JSON.stringify(parts));
+      trial.upperArm.legFront.baseLength += d;
+      trial.upperArm.legRear.baseLength += d;
+      try {
+        buildCornerStatic(chassis, trial, setup, side);
+        return d;
+      } catch { /* keep searching */ }
+    }
+  }
+  return null;
+}
+
 export function buildCornerStatic(
   chassis: Chassis, parts: CornerParts, setup: Setup, side: Side,
 ): CornerStatic {

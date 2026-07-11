@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Vec3 } from '../core/math';
-import { CornerStatic, CornerSolution } from '../core/assembly';
+import { CornerDiagnostics, CornerStatic, CornerSolution } from '../core/assembly';
 import { FrontAssembly } from '../core/trim';
 import { FrontState } from '../core/metrics';
 
@@ -56,6 +56,7 @@ export class Scene3D {
   private frameLines: THREE.Line[] = [];
   private ghostLines: THREE.Line[] = [];
   private ghostSet = false;
+  private diagGroup = new THREE.Group();
   private host: HTMLElement;
 
   constructor(host: HTMLElement) {
@@ -104,6 +105,58 @@ export class Scene3D {
       m.transparent = true; m.opacity = 0.55;
       l.visible = false;
       this.ghostLines.push(l);
+    }
+  }
+
+  /**
+   * Failed-assembly skeleton: draw the MEASURED geometry as-is — arms to
+   * their ball joints, and the spindle as a red bar of its true height
+   * hanging off the LBJ toward the UBJ. The gap between the bar end and the
+   * UBJ ball IS the problem, in inches, visible.
+   */
+  setDiagnostic(diags: CornerDiagnostics[] | null): void {
+    // rebuild the group from scratch — this is a rare, failure-only path
+    [...this.diagGroup.children].forEach((c) => {
+      const m = c as THREE.Mesh | THREE.Line;
+      m.geometry?.dispose();
+      (m.material as THREE.Material)?.dispose();
+      this.diagGroup.remove(c);
+    });
+    if (this.diagGroup.parent !== this.scene) this.scene.add(this.diagGroup);
+    if (!diags) return;
+    const lineMat = () => new THREE.LineBasicMaterial({ color: 0xff5d6c });
+    const dashMat = () => new THREE.LineDashedMaterial({ color: 0xff5d6c, dashSize: 1, gapSize: 0.7 });
+    const line = (a: Vec3, b: Vec3, dashed = false) => {
+      const l = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([T(a), T(b)]),
+        dashed ? dashMat() : lineMat(),
+      );
+      if (dashed) l.computeLineDistances();
+      this.diagGroup.add(l);
+    };
+    const dot = (p: Vec3, r = 0.7) => {
+      const m = new THREE.Mesh(
+        new THREE.SphereGeometry(r, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0xff5d6c }),
+      );
+      m.position.copy(T(p));
+      this.diagGroup.add(m);
+    };
+    for (const d of diags) {
+      if (!d.pickups || !d.LBJ0) continue;
+      line(d.pickups.lowerFront, d.LBJ0, true);
+      line(d.pickups.lowerRear, d.LBJ0, true);
+      dot(d.LBJ0);
+      if (d.UBJ0) {
+        line(d.pickups.upperFront, d.UBJ0, true);
+        line(d.pickups.upperRear, d.UBJ0, true);
+        dot(d.UBJ0);
+        // spindle bar: true height, aimed at the UBJ — the shortfall/overlap shows
+        const dir = d.UBJ0.clone().sub(d.LBJ0).normalize();
+        const tip = d.LBJ0.clone().add(dir.multiplyScalar(d.spindleHeight));
+        line(d.LBJ0, tip, false);
+        dot(tip, 0.5);
+      }
     }
   }
 

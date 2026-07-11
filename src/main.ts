@@ -17,7 +17,9 @@ import { chartMulti, seriesRange } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
 import { PickRequest, buildPartsForm, setFrontPoint, setFrontValue } from './ui/panels';
 import { armPickLengths } from './state/setup';
-import { AssemblyError, kingpinFrame, toKingpinLocal } from './core/assembly';
+import {
+  AssemblyError, cornerDiagnostics, fitUpperLegsToSpindle, kingpinFrame, toKingpinLocal,
+} from './core/assembly';
 import { V as coreV } from './core/math';
 import { ChassisPicks, ScanManager, ScanUnits, UNIT_TO_INCHES } from './ui/scan';
 
@@ -34,21 +36,23 @@ const scene = new Scene3D($('scene'));
 
 const AUTOSAVE_KEY = 'clrAutosave';
 let fixingArms = false;
+let lastGoodState: string | null = null;   // for "undo the change"
 
 function rebuild(): void {
+  // ALWAYS persist — 10 minutes of scan picks must survive a reload even if
+  // the state doesn't assemble yet
+  try { localStorage.setItem(AUTOSAVE_KEY, serializeState(front, setup)); } catch { /* storage full */ }
   try {
     fa = assembleFront(front, setup);
     sweep = computeSweep(fa);
+    lastGoodState = serializeState(front, setup);
     $('asmErr').style.display = 'none';
-    // auto-persist every good state — measurements survive a reload
-    try { localStorage.setItem(AUTOSAVE_KEY, serializeState(front, setup)); } catch { /* storage full */ }
+    scene.setDiagnostic(null);
   } catch (err) {
     if (!fixingArms && err instanceof AssemblyError && err.armFixable && err.side && offerArmFix(err)) {
       return;   // handled: either legs were fitted + rebuilt, or state reverted
     }
-    // keep the last good assembly on screen so the user can back out
-    $('asmErr').textContent = 'ASSEMBLY: ' + (err as Error).message;
-    $('asmErr').style.display = 'block';
+    showAssemblyFailure(err as Error);
   }
   scene.clearTrail();
   syncLegLengths();
@@ -56,55 +60,73 @@ function rebuild(): void {
   update();
 }
 
+/** Failure = diagnosis, not a dead end: red skeleton of the measured
+ *  geometry in the scene + the exact numbers in the banner. */
+function showAssemblyFailure(err: Error): void {
+  const diags = (['R', 'L'] as Side[]).map((s) =>
+    cornerDiagnostics(front.chassis, front.corners[s], setup, s));
+  scene.setDiagnostic(diags);
+  const lines = diags.filter((d) => !d.ok).map((d) =>
+    `${d.side}: ${d.error} · legs ${d.legFront.toFixed(2)}"/${d.legRear.toFixed(2)}"`);
+  $('asmErr').innerHTML =
+    'ASSEMBLY: ' + (err as Error).message
+    + (lines.length ? '<br>' + lines.join('<br>') : '')
+    + '<br>red skeleton = your measured geometry · re-pick the odd point with its ⌖ button (no need to redo the wizard)';
+  $('asmErr').style.display = 'block';
+}
+
 /**
- * A measured spindle that the current upper arm can't reach is a real shop
+ * A measured spindle the current upper arm can't reach is a real shop
  * situation — the fix on the car is turning the heims. Offer exactly that:
- * OK = find the smallest equal change to both upper leg lengths that makes
- * the corner assemble, No = undo the edit (restore the last good state).
+ * OK = smallest equal change to both upper leg lengths that assembles the
+ * CORNER (searched in core, ±6"), Cancel = undo back to the last good state.
  */
 function offerArmFix(err: AssemblyError): boolean {
   const side = err.side!;
+  const diag = cornerDiagnostics(front.chassis, front.corners[side], setup, side);
   const ok = window.confirm(
-    `${err.message}\n\nThe ${side === 'R' ? 'RIGHT' : 'LEFT'} upper control arm leg lengths `
-    + 'will have to change to assemble this spindle.\n\n'
-    + 'OK — fit the upper arm legs to the spindle\nCancel — undo the change',
+    `${err.message}\n\n`
+    + (diag.reachMin !== undefined
+      ? `Measured: spindle ${diag.spindleHeight.toFixed(2)}", arms reach ${diag.reachMin.toFixed(2)}"–${diag.reachMax!.toFixed(2)}" `
+        + `with legs ${diag.legFront.toFixed(2)}"/${diag.legRear.toFixed(2)}".\n\n`
+      : '')
+    + `The ${side === 'R' ? 'RIGHT' : 'LEFT'} upper control arm leg lengths will have to change to assemble this spindle.\n\n`
+    + 'OK — fit the upper arm legs to the spindle\nCancel — undo the change (measurements stay auto-saved)',
   );
   if (!ok) {
-    try {
-      const saved = localStorage.getItem(AUTOSAVE_KEY);
-      if (saved) {
-        const loaded = loadStateJSON(saved);
+    if (lastGoodState) {
+      try {
+        const loaded = loadStateJSON(lastGoodState);
         front = loaded.front;
         setup = loaded.setup;
-      }
-    } catch { /* nothing to restore */ }
+      } catch { /* keep current */ }
+    }
     fixingArms = true;
     rebuildForm(); syncAdjInputs(); rebuild();
     fixingArms = false;
     return true;
   }
-  // search the smallest equal-length change (±4", 0.05" steps) that assembles
-  for (let i = 1; i <= 80; i++) {
-    for (const d of [i * 0.05, -i * 0.05]) {
-      const trial: FrontEnd = JSON.parse(JSON.stringify(front));
-      trial.corners[side].upperArm.legFront.baseLength += d;
-      trial.corners[side].upperArm.legRear.baseLength += d;
-      try {
-        assembleFront(trial, setup);
-      } catch { continue; }
-      front = trial;
-      fixingArms = true;
-      rebuildForm(); syncAdjInputs(); rebuild();
-      fixingArms = false;
-      $('asmErr').textContent =
-        `ARM FIT: ${side} upper legs ${d > 0 ? 'lengthened' : 'shortened'} ${Math.abs(d).toFixed(2)}" each to reach the spindle — check the part card`;
-      $('asmErr').style.display = 'block';
-      setTimeout(() => { $('asmErr').style.display = 'none'; }, 6000);
-      return true;
-    }
+  const d = fitUpperLegsToSpindle(front.chassis, front.corners[side], setup, side);
+  if (d === null) {
+    // even ±6" of heim can't span it — a pick is off; show the diagnosis
+    fixingArms = true;
+    showAssemblyFailure(err);
+    fixingArms = false;
+    update();
+    return true;
   }
-  window.alert('Could not fit the upper arm to this spindle within ±4" — check the picked points.');
-  return false;
+  front.corners[side].upperArm.legFront.baseLength = r3(front.corners[side].upperArm.legFront.baseLength + d);
+  front.corners[side].upperArm.legRear.baseLength = r3(front.corners[side].upperArm.legRear.baseLength + d);
+  fixingArms = true;   // if something ELSE still fails, show THAT error honestly
+  rebuildForm(); syncAdjInputs(); rebuild();
+  fixingArms = false;
+  if ($('asmErr').style.display !== 'block') {
+    $('asmErr').textContent =
+      `ARM FIT: ${side} upper legs ${d > 0 ? 'lengthened' : 'shortened'} ${Math.abs(d).toFixed(2)}" each to reach the spindle — check the part card`;
+    $('asmErr').style.display = 'block';
+    setTimeout(() => { $('asmErr').style.display = 'none'; }, 8000);
+  }
+  return true;
 }
 
 function inputs() {
@@ -869,8 +891,12 @@ function finishWizard(): void {
     update();
     $('scanStatus').style.color = 'var(--good)';
     $('scanStatus').textContent = 'car measured from scan ✓ — now enter gauge camber/toe and Calibrate spindles';
+    setTimeout(() => { scan.clearMarkers(); scene.render(); }, 4000);
+  } else {
+    // keep the pick markers up next to the red skeleton — that's the diagnosis
+    $('scanStatus').style.color = 'var(--bad)';
+    $('scanStatus').textContent = 'measured, but a corner won\'t assemble — see the red skeleton; re-pick the odd point (⌖). Everything is saved.';
   }
-  setTimeout(() => { scan.clearMarkers(); scene.render(); }, 4000);
 }
 
 function cancelWizard(): void {

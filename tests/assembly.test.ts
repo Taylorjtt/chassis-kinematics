@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { rig } from './helpers';
 import { toeInches } from '../src/core/metrics';
 import { fullWCz, shockLenAt, thetaForWheel } from '../src/core/trim';
-import { AssemblyError } from '../src/core/assembly';
+import { AssemblyError, cornerDiagnostics, fitUpperLegsToSpindle } from '../src/core/assembly';
 import { assembleFront } from '../src/core/trim';
 import { defaultState } from '../src/state/setup';
 
@@ -117,6 +117,43 @@ describe('assembly failure modes', () => {
     front.corners.R.upperArm.legRear.baseLength = 5; // pickups are 12" apart
     expect(() => assembleFront(front, setup)).toThrow(AssemblyError);
   });
+  it('diagnostics report the reach window in inches, ok on the default car', () => {
+    const { front, setup } = defaultState();
+    const d = cornerDiagnostics(front.chassis, front.corners.R, setup, 'R');
+    expect(d.ok).toBe(true);
+    expect(d.reachMin!).toBeLessThan(d.spindleHeight);
+    expect(d.reachMax!).toBeGreaterThan(d.spindleHeight);
+    expect(d.LBJ0).toBeDefined();
+    expect(d.UBJ0).toBeDefined();
+  });
+
+  it('diagnostics quantify an unreachable spindle instead of just failing', () => {
+    const { front, setup } = defaultState();
+    front.corners.R.spindle.height = 23;   // beyond the arms' swing envelope
+    const d = cornerDiagnostics(front.chassis, front.corners.R, setup, 'R');
+    expect(d.ok).toBe(false);
+    expect(d.error).toMatch(/too tall/);
+    expect(d.reachMax!).toBeLessThan(d.spindleHeight);
+  });
+
+  it('fitUpperLegsToSpindle finds a leg change that assembles the corner', () => {
+    const { front, setup } = defaultState();
+    front.corners.R.spindle.height = 22;   // outside reach; legs must grow
+    const d = fitUpperLegsToSpindle(front.chassis, front.corners.R, setup, 'R');
+    expect(d).not.toBeNull();
+    expect(Math.abs(d!)).toBeGreaterThan(0);
+    front.corners.R.upperArm.legFront.baseLength += d!;
+    front.corners.R.upperArm.legRear.baseLength += d!;
+    const diag = cornerDiagnostics(front.chassis, front.corners.R, setup, 'R');
+    expect(diag.ok).toBe(true);
+  });
+
+  it('fitUpperLegsToSpindle gives up (null) on hopeless geometry', () => {
+    const { front, setup } = defaultState();
+    front.corners.R.spindle.height = 40;
+    expect(fitUpperLegsToSpindle(front.chassis, front.corners.R, setup, 'R')).toBeNull();
+  });
+
   it('flags arm-fixable failures with the side, so the UI can offer the heim fix', () => {
     const { front, setup } = defaultState();
     front.corners.L.spindle.height = 30;   // way beyond the arms' reach
