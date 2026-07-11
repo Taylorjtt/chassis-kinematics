@@ -15,7 +15,7 @@ import { defaultState, loadStateJSON, serializeState } from './state/setup';
 import { Scene3D } from './ui/scene3d';
 import { chartMulti, seriesRange } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
-import { PickRequest, buildPartsForm, setFrontPoint, setFrontValue } from './ui/panels';
+import { PickRequest, buildPartsForm, getFrontPoint, setFrontPoint, setFrontValue } from './ui/panels';
 import { armPickLengths } from './state/setup';
 import {
   AssemblyError, cornerDiagnostics, fitUpperLegsToSpindle, kingpinFrame, toKingpinLocal,
@@ -966,8 +966,21 @@ function cancelWizard(): void {
 }
 
 /* ---------------- parts form ---------------- */
+let focusedPointPath: string | null = null;
+
+function refreshHighlight(): void {
+  const t = focusedPointPath ? getFrontPoint(front, focusedPointPath) : null;
+  scene.setHighlight(t ? coreV(t[0], t[1], t[2]) : null);
+  scene.render();
+}
+
 function rebuildForm(): void {
-  buildPartsForm($('hpForm'), { front, setup }, () => { rebuildForm(); rebuild(); }, handlePickReq);
+  buildPartsForm(
+    $('hpForm'), { front, setup },
+    (structural) => { if (structural) rebuildForm(); rebuild(); refreshHighlight(); },
+    handlePickReq,
+    (path) => { focusedPointPath = path; refreshHighlight(); },
+  );
 }
 $('hpMirror').addEventListener('click', () => {
   const mirror = <T,>(o: T): T => JSON.parse(JSON.stringify(o));

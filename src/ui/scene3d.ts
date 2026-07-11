@@ -57,6 +57,7 @@ export class Scene3D {
   private ghostLines: THREE.Line[] = [];
   private ghostSet = false;
   private diagGroup = new THREE.Group();
+  private highlight: THREE.Group | null = null;
   private host: HTMLElement;
 
   constructor(host: HTMLElement) {
@@ -106,6 +107,32 @@ export class Scene3D {
       l.visible = false;
       this.ghostLines.push(l);
     }
+  }
+
+  /** Magenta crosshair marking the point field being fine-tuned. */
+  setHighlight(p: Vec3 | null): void {
+    if (!this.highlight) {
+      const g = new THREE.Group();
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(0.4, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0xff4dd8 }),
+      );
+      g.add(ball);
+      const mat = new THREE.LineBasicMaterial({ color: 0xff4dd8 });
+      const axes: [number, number, number][][] = [
+        [[-2.5, 0, 0], [2.5, 0, 0]], [[0, -2.5, 0], [0, 2.5, 0]], [[0, 0, -2.5], [0, 0, 2.5]],
+      ];
+      axes.forEach(([a, b]) => {
+        const l = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([V3(...a), V3(...b)]), mat,
+        );
+        g.add(l);
+      });
+      this.scene.add(g);
+      this.highlight = g;
+    }
+    this.highlight.visible = !!p;
+    if (p) this.highlight.position.copy(T(p));
   }
 
   /**

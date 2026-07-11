@@ -74,12 +74,22 @@ export function setFrontPoint(front: FrontEnd, path: string, t3: T3): void {
   arr[0] = t3[0]; arr[1] = t3[1]; arr[2] = t3[2];
 }
 
+/** Read a chassis point path (for the live highlight while fine-tuning). */
+export function getFrontPoint(front: FrontEnd, path: string): T3 | null {
+  const arr = getPath(front, path);
+  return Array.isArray(arr) && arr.length === 3 ? (arr as T3) : null;
+}
+
 const card = (title: string, cls: string, body: string) =>
   `<div class="card ${cls}"><h4>${esc(title)}</h4>${body}</div>`;
 
+/** onChange(structural): structural=true means the form layout itself must
+ *  re-render (badges, pin creation) — plain value edits must NOT re-render
+ *  or the focused field loses focus mid-nudge. */
 export function buildPartsForm(
-  host: HTMLElement, ctx: Ctx, onChange: () => void,
+  host: HTMLElement, ctx: Ctx, onChange: (structural?: boolean) => void,
   onPick?: (req: PickRequest) => void,
+  onFocusPoint?: (path: string | null) => void,
 ): void {
   let h = '';
   h += card('Vehicle & steering linkage', 'wide', '<div class="numrow">'
@@ -178,6 +188,19 @@ export function buildPartsForm(
   host.innerHTML = h;
 
   host.querySelectorAll<HTMLInputElement>('input[data-path]').forEach((inp) => {
+    // point fields: live crosshair in the 3D view while focused, and
+    // Shift+Arrow = 0.01" fine nudge (plain arrows step 0.1")
+    if (inp.dataset.ax !== undefined) {
+      inp.addEventListener('focus', () => onFocusPoint?.(inp.dataset.path!));
+      inp.addEventListener('blur', () => onFocusPoint?.(null));
+      inp.addEventListener('keydown', (e) => {
+        if (!e.shiftKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+        e.preventDefault();
+        const v = (parseFloat(inp.value) || 0) + (e.key === 'ArrowUp' ? 0.01 : -0.01);
+        inp.value = String(+v.toFixed(4));
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
     inp.addEventListener('input', () => {
       let val = parseFloat(inp.value);
       if (!isFinite(val)) return;
@@ -225,7 +248,7 @@ export function buildPartsForm(
     btn.addEventListener('click', () => {
       const side = btn.dataset.clearcal as Side;
       ctx.front.corners[side].spindle.calibrated = undefined;
-      onChange();
+      onChange(true);
     });
   });
 }
