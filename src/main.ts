@@ -10,11 +10,13 @@ import {
   FrontState, SweepData, TravelMode, computeSweep, gainAt, solveFrontState, toeInches,
 } from './core/metrics';
 import { calibrateSpindle } from './core/calibrate';
+import { Vector2, Vector3 } from 'three';
 import { defaultState, loadStateJSON, serializeState } from './state/setup';
 import { Scene3D } from './ui/scene3d';
 import { chartMulti, seriesRange } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
-import { buildPartsForm } from './ui/panels';
+import { buildPartsForm, setFrontPoint } from './ui/panels';
+import { AlignPicks, ScanManager, ScanUnits, UNIT_TO_INCHES } from './ui/scan';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const fmt = (n: number, d: number) => (n >= 0 ? '+' : '') + n.toFixed(d);
@@ -389,9 +391,148 @@ $('zeroInputs').addEventListener('click', () => {
   scene.clearTrail(); update();
 });
 
+/* ---------------- 3D scan import + point picking ---------------- */
+const scan = new ScanManager();
+scene.addObject(scan.group);
+
+let pickCb: ((p: Vector3) => void) | null = null;
+function startPick(label: string, cb: (p: Vector3) => void): void {
+  pickCb = cb;
+  $('pickMsg').textContent = '⌖ Click on the scan: ' + label + '  (Esc cancels)';
+  $('pickMsg').style.display = 'block';
+  $('stage').classList.add('picking');
+}
+function endPick(): void {
+  pickCb = null;
+  $('pickMsg').style.display = 'none';
+  $('stage').classList.remove('picking');
+}
+let downAt: { x: number; y: number } | null = null;
+scene.canvas.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+scene.canvas.addEventListener('pointerup', (e) => {
+  if (!pickCb || !downAt) return;
+  if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6) return;  // was an orbit drag
+  const r = scene.canvas.getBoundingClientRect();
+  const ndc = new Vector2(
+    ((e.clientX - r.left) / r.width) * 2 - 1,
+    -((e.clientY - r.top) / r.height) * 2 + 1,
+  );
+  const p = scan.pick(ndc, scene.cam);
+  if (!p) { $('pickMsg').textContent = '⌖ missed the scan — click again  (Esc cancels)'; return; }
+  const cb = pickCb;
+  pickCb = null;
+  cb(p);           // may chain into the next wizard step via startPick
+  if (!pickCb) endPick();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && pickCb) {
+    alignPicks = [];
+    scan.clearMarkers();
+    endPick();
+    scene.render();
+  }
+});
+
+let alignPicks: Vector3[] = [];
+function alignWizard(): void {
+  if (!scan.loaded) return;
+  alignPicks = [];
+  scan.clearMarkers();
+  const labels = [
+    'FLOOR point 1 of 3 (spread them out)',
+    'FLOOR point 2 of 3',
+    'FLOOR point 3 of 3',
+    'LEFT hub / spindle center',
+    'RIGHT hub / spindle center',
+    'any point near the FRONT of the car',
+  ];
+  const next = (): void => {
+    if (alignPicks.length < 6) {
+      startPick(labels[alignPicks.length], (p) => {
+        alignPicks.push(p);
+        scan.addMarker(p);
+        scene.render();
+        next();
+      });
+    } else {
+      const picks: AlignPicks = {
+        ground: alignPicks.slice(0, 3),
+        hubL: alignPicks[3], hubR: alignPicks[4], front: alignPicks[5],
+      };
+      const actual = parseFloat(($('scanScaleActual') as HTMLInputElement).value);
+      const units = ($('scanUnits') as HTMLSelectElement).value as ScanUnits;
+      const res = scan.applyAlignment(
+        picks,
+        isFinite(actual) && actual > 0
+          ? { actualHubDistIn: actual }
+          : { unitToInches: UNIT_TO_INCHES[units] },
+      );
+      alignPicks = [];
+      $('scanStatus').style.color = 'var(--good)';
+      $('scanStatus').textContent =
+        `aligned ✓ — hub-to-hub ${res.hubDistIn.toFixed(2)}" · ${scan.info}`;
+      scene.resetView();
+      update();
+    }
+  };
+  next();
+}
+
+function scanNote(msg: string): void {
+  $('scanStatus').style.color = 'var(--bad)';
+  $('scanStatus').textContent = msg;
+}
+$('scanLoad').addEventListener('click', () => $('scanFile').click());
+$('scanFile').addEventListener('change', async (e) => {
+  const f = (e.target as HTMLInputElement).files?.[0];
+  (e.target as HTMLInputElement).value = '';
+  if (!f) return;
+  $('scanStatus').style.color = 'var(--dim)';
+  $('scanStatus').textContent = `loading ${f.name} (${(f.size / 1e6).toFixed(0)} MB)…`;
+  try {
+    await scan.load(f);
+    ($('scanAlign') as HTMLButtonElement).disabled = false;
+    $('scanScaleRow').style.display = 'flex';
+    $('scanStatus').style.color = scan.aligned ? 'var(--good)' : 'var(--dim)';
+    $('scanStatus').textContent = scan.info
+      + (scan.aligned ? ' — stored alignment applied ✓' : ' — now Align scan');
+    scan.setOpacity(+($('scanOpacity') as HTMLInputElement).value);
+    update();
+  } catch (err) {
+    scanNote('load failed: ' + (err as Error).message);
+  }
+});
+$('scanAlign').addEventListener('click', alignWizard);
+$('scanOpacity').addEventListener('input', () => {
+  scan.setOpacity(+($('scanOpacity') as HTMLInputElement).value);
+  scene.render();
+});
+$('scanVisible').addEventListener('change', () => {
+  scan.group.visible = ($('scanVisible') as HTMLInputElement).checked;
+  scene.render();
+});
+$('scanClear').addEventListener('click', () => {
+  scan.clear();
+  ($('scanAlign') as HTMLButtonElement).disabled = true;
+  $('scanScaleRow').style.display = 'none';
+  $('scanStatus').textContent = '';
+  scene.render();
+});
+
 /* ---------------- parts form ---------------- */
 function rebuildForm(): void {
-  buildPartsForm($('hpForm'), { front, setup }, () => { rebuildForm(); rebuild(); });
+  buildPartsForm($('hpForm'), { front, setup }, () => { rebuildForm(); rebuild(); }, (path, label) => {
+    if (!scan.loaded) { scanNote('load a 3D scan first (scan card, bottom left)'); return; }
+    if (!scan.aligned) { scanNote('align the scan first — Align scan button'); return; }
+    startPick(label, (p) => {
+      const r3 = (v: number) => Math.round(v * 1000) / 1000;
+      setFrontPoint(front, path, [r3(p.x), r3(p.y), r3(p.z)]);
+      scan.addMarker(p, 0x46d18a);
+      setTimeout(() => { scan.clearMarkers(); scene.render(); }, 2500);
+      rebuildForm();
+      rebuild();
+    });
+  });
 }
 $('hpMirror').addEventListener('click', () => {
   const mirror = <T,>(o: T): T => JSON.parse(JSON.stringify(o));

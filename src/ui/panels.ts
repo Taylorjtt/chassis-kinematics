@@ -35,14 +35,25 @@ function pointField(ctx: Ctx, label: string, path: string, side: Side | null): s
   const f = (ax: number, lab: string, value: number) =>
     `<div class="f"><i>${lab}</i><input type="number" step="0.1" value="${+value.toFixed(4)}" `
     + `data-root="front" data-path="${path}" data-ax="${ax}" data-side="${side ?? ''}"></div>`;
-  return `<div class="ptrow"><div class="pl">${esc(label)}</div><div class="xyz">`
+  return `<div class="ptrow"><div class="pl">${esc(label)}`
+    + `<button class="pickbtn" data-pickpt="${path}" data-picklabel="${esc(label)}" title="pick this point on the 3D scan">⌖ pick</button>`
+    + '</div><div class="xyz">'
     + f(0, 'x', arr[0]) + f(1, ylab, yDisp) + f(2, 'z', arr[2]) + '</div></div>';
+}
+
+/** Write a picked scan point (car-frame coords) into a chassis point path. */
+export function setFrontPoint(front: FrontEnd, path: string, t3: T3): void {
+  const arr = getPath(front, path) as T3;
+  arr[0] = t3[0]; arr[1] = t3[1]; arr[2] = t3[2];
 }
 
 const card = (title: string, cls: string, body: string) =>
   `<div class="card ${cls}"><h4>${esc(title)}</h4>${body}</div>`;
 
-export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void): void {
+export function buildPartsForm(
+  host: HTMLElement, ctx: Ctx, onChange: () => void,
+  onPick?: (path: string, label: string) => void,
+): void {
   let h = '';
   h += card('Vehicle & steering linkage', 'wide', '<div class="numrow">'
     + numField(ctx, 'Wheelbase', 'front', 'chassis.wheelbase', 0.5)
@@ -151,6 +162,11 @@ export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void
     sel.addEventListener('change', () => {
       setPath(ctx.front, sel.dataset.path!, sel.value);
       onChange();
+    });
+  });
+  host.querySelectorAll<HTMLButtonElement>('button[data-pickpt]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      onPick?.(btn.dataset.pickpt!, btn.dataset.picklabel ?? 'point');
     });
   });
   host.querySelectorAll<HTMLButtonElement>('button[data-clearcal]').forEach((btn) => {

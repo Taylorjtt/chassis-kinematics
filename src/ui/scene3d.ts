@@ -131,6 +131,13 @@ export class Scene3D {
     this.ghostSet = true;
   }
 
+  /** For the scan importer: raycasting needs the camera + canvas, and the
+   *  scan group lives directly in the scene. */
+  get canvas(): HTMLCanvasElement { return this.renderer.domElement; }
+  get cam(): THREE.PerspectiveCamera { return this.camera; }
+  addObject(obj: THREE.Object3D): void { this.scene.add(obj); }
+  removeObject(obj: THREE.Object3D): void { this.scene.remove(obj); }
+
   resetView(): void {
     this.camera.position.set(
       98 * Math.sin(1.15) * Math.cos(-0.9),

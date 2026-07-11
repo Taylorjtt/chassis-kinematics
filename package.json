@@ -11,7 +11,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "three": "^0.169.0"
+    "three": "^0.169.0",
+    "three-mesh-bvh": "^0.9.11"
   },
   "devDependencies": {
     "@types/three": "^0.169.0",
