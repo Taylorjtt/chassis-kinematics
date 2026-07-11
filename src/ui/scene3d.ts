@@ -22,6 +22,7 @@ const COL = {
 
 export interface DisplayToggles {
   construct: boolean; trail: boolean; shock: boolean; wire: boolean; ghost: boolean;
+  model: boolean;   // hide the whole sim model to pick scan points behind it
 }
 
 interface WheelGroup extends THREE.Group {
@@ -41,6 +42,8 @@ interface SideVis {
 
 export class Scene3D {
   private scene = new THREE.Scene();
+  /** everything belonging to the SIM MODEL (not the scan/grid/lights) */
+  private simRoot = new THREE.Group();
   private camera: THREE.PerspectiveCamera;
   private renderer: THREE.WebGLRenderer;
   private controls: OrbitControls;
@@ -72,6 +75,7 @@ export class Scene3D {
     fillL.position.set(-40, 40, 20); this.scene.add(fillL);
     const grid = new THREE.GridHelper(140, 28, 0x2a3340, 0x1a2027);
     grid.rotation.x = Math.PI / 2; this.scene.add(grid);
+    this.scene.add(this.simRoot);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = false;
@@ -165,7 +169,7 @@ export class Scene3D {
       new THREE.CylinderGeometry(r, r, 1, 14),
       new THREE.MeshStandardMaterial({ color: c, metalness: 0.55, roughness: 0.45 }),
     );
-    this.scene.add(m); return m;
+    this.simRoot.add(m); return m;
   }
   private setRod(m: THREE.Mesh, p1: THREE.Vector3, p2: THREE.Vector3): void {
     const dir = p2.clone().sub(p1), len = dir.length();
@@ -180,14 +184,14 @@ export class Scene3D {
       new THREE.SphereGeometry(r, 16, 16),
       new THREE.MeshStandardMaterial({ color: c, metalness: 0.3, roughness: 0.5, emissive: c, emissiveIntensity: 0.15 }),
     );
-    this.scene.add(m); return m;
+    this.simRoot.add(m); return m;
   }
   private lineObj(c: number, dashed: boolean): THREE.Line {
     const mat = dashed
       ? new THREE.LineDashedMaterial({ color: c, dashSize: 1.2, gapSize: 0.8 })
       : new THREE.LineBasicMaterial({ color: c });
     const l = new THREE.Line(new THREE.BufferGeometry(), mat);
-    this.scene.add(l);
+    this.simRoot.add(l);
     (l as unknown as { _dashed: boolean })._dashed = dashed;
     return l;
   }
@@ -198,7 +202,7 @@ export class Scene3D {
 
   private makeWheel(rimCol: number): WheelGroup {
     const g = new THREE.Group() as WheelGroup;
-    this.scene.add(g);
+    this.simRoot.add(g);
     const mk = (R: number, W: number) => ({
       tire: new THREE.TorusGeometry(R - W * 0.28, W * 0.32, 12, 30),
       rim: new THREE.CylinderGeometry(R - W * 0.55, R - W * 0.55, W * 0.55, 24),
@@ -262,6 +266,7 @@ export class Scene3D {
   }
 
   update(fa: FrontAssembly, m: FrontState, tg: DisplayToggles): void {
+    this.simRoot.visible = tg.model;
     this.drawCorner(this.visR, fa.statR, m.cR);
     this.drawCorner(this.visL, fa.statL, m.cL);
     for (const v of [this.visR, this.visL]) {

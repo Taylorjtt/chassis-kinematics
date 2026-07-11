@@ -65,7 +65,7 @@ function toggles() {
   const on = (id: string) => ($(id) as HTMLInputElement).checked;
   return {
     construct: on('tConstruct'), trail: on('tTrail'), shock: on('tShock'),
-    wire: on('tWire'), ghost: on('tGhost'),
+    wire: on('tWire'), ghost: on('tGhost'), model: on('tModel'),
   };
 }
 
@@ -384,7 +384,16 @@ $('travL').addEventListener('input', () => travInput('L'));
 $('travR').addEventListener('input', () => travInput('R'));
 $('steer').addEventListener('input', update);
 $('setBaseline').addEventListener('click', () => { captureBaseline(); update(); });
-['tConstruct', 'tTrail', 'tShock', 'tWire', 'tFront', 'tGhost'].forEach((id) => {
+// H toggles the sim model — handy mid-pick when it covers the scan
+window.addEventListener('keydown', (e) => {
+  const t = e.target as HTMLElement;
+  if (e.key.toLowerCase() !== 'h' || t?.tagName === 'INPUT' || t?.tagName === 'SELECT' || t?.tagName === 'TEXTAREA') return;
+  const box = $('tModel') as HTMLInputElement;
+  box.checked = !box.checked;
+  box.closest('.tg')!.classList.toggle('on', box.checked);
+  update();
+});
+['tModel', 'tConstruct', 'tTrail', 'tShock', 'tWire', 'tFront', 'tGhost'].forEach((id) => {
   const el = $(id) as HTMLInputElement;
   el.addEventListener('change', () => {
     el.closest('.tg')!.classList.toggle('on', el.checked);
@@ -405,7 +414,7 @@ scene.addObject(scan.group);
 let pickCb: ((p: Vector3) => void) | null = null;
 function startPick(label: string, cb: (p: Vector3) => void): void {
   pickCb = cb;
-  $('pickMsg').textContent = '⌖ Click on the scan: ' + label + '  (Esc cancels)';
+  $('pickMsg').textContent = '⌖ Click on the scan: ' + label + '  (H hides the model · Esc cancels)';
   $('pickMsg').style.display = 'block';
   $('stage').classList.add('picking');
 }
