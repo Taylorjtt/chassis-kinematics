@@ -117,6 +117,19 @@ describe('assembly failure modes', () => {
     front.corners.R.upperArm.legRear.baseLength = 5; // pickups are 12" apart
     expect(() => assembleFront(front, setup)).toThrow(AssemblyError);
   });
+  it('flags arm-fixable failures with the side, so the UI can offer the heim fix', () => {
+    const { front, setup } = defaultState();
+    front.corners.L.spindle.height = 30;   // way beyond the arms' reach
+    try {
+      assembleFront(front, setup);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      const err = e as AssemblyError;
+      expect(err).toBeInstanceOf(AssemblyError);
+      expect(err.side).toBe('L');
+      expect(err.armFixable).toBe(true);
+    }
+  });
 });
 
 describe('trim helpers', () => {

@@ -28,7 +28,11 @@ import {
   effectiveLegLength, effectiveTieRodLength,
 } from './parts';
 
-export class AssemblyError extends Error {}
+export class AssemblyError extends Error {
+  constructor(message: string, public side?: Side, public armFixable = false) {
+    super(message);
+  }
+}
 
 /* ============================================================ RIGID ARM
  * A control arm is rigid: attachments are stored in arm-local coordinates
@@ -258,13 +262,18 @@ export function buildCornerStatic(
   const attShockLow = seatAttachment(lowArm, la.shockSeat);
 
   const ua = parts.upperArm;
-  const attUBJ = upperBJAttachment(
-    upArm,
-    pts.upperFront.distanceTo(pts.upperRear),
-    effectiveLegLength(ua.legFront, corner.heimTurnsFront),
-    effectiveLegLength(ua.legRear, corner.heimTurnsRear),
-    ua.bjDrop,
-  );
+  let attUBJ: ArmAttachment;
+  try {
+    attUBJ = upperBJAttachment(
+      upArm,
+      pts.upperFront.distanceTo(pts.upperRear),
+      effectiveLegLength(ua.legFront, corner.heimTurnsFront),
+      effectiveLegLength(ua.legRear, corner.heimTurnsRear),
+      ua.bjDrop,
+    );
+  } catch (e) {
+    throw new AssemblyError(`${side}: ${(e as Error).message}`, side, true);
+  }
 
   // ---- reference state: lower arm at θ=0, upper arm solved to spindle height
   const LBJ0 = lowArm.point(attLBJ, 0);
@@ -272,7 +281,10 @@ export function buildCornerStatic(
   const fRef = (phi: number) => upArm.point(attUBJ, phi).distanceTo(LBJ0) - uprLen;
   const phi0 = solveRoot(fRef, 0, -0.9, 0.9);
   if (Math.abs(fRef(phi0)) > 1e-3) {
-    throw new AssemblyError(`${side}: cannot assemble — spindle height ${uprLen.toFixed(2)}" unreachable by the arms`);
+    throw new AssemblyError(
+      `${side}: cannot assemble — spindle height ${uprLen.toFixed(2)}" unreachable by the arms`,
+      side, true,
+    );
   }
   const UBJ0 = upArm.point(attUBJ, phi0);
 

@@ -17,7 +17,7 @@ import { chartMulti, seriesRange } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
 import { PickRequest, buildPartsForm, setFrontPoint, setFrontValue } from './ui/panels';
 import { armPickLengths } from './state/setup';
-import { kingpinFrame, toKingpinLocal } from './core/assembly';
+import { AssemblyError, kingpinFrame, toKingpinLocal } from './core/assembly';
 import { V as coreV } from './core/math';
 import { ChassisPicks, ScanManager, ScanUnits, UNIT_TO_INCHES } from './ui/scan';
 
@@ -33,6 +33,7 @@ let mode: TravelMode = 'wheel';
 const scene = new Scene3D($('scene'));
 
 const AUTOSAVE_KEY = 'clrAutosave';
+let fixingArms = false;
 
 function rebuild(): void {
   try {
@@ -42,6 +43,9 @@ function rebuild(): void {
     // auto-persist every good state — measurements survive a reload
     try { localStorage.setItem(AUTOSAVE_KEY, serializeState(front, setup)); } catch { /* storage full */ }
   } catch (err) {
+    if (!fixingArms && err instanceof AssemblyError && err.armFixable && err.side && offerArmFix(err)) {
+      return;   // handled: either legs were fitted + rebuilt, or state reverted
+    }
     // keep the last good assembly on screen so the user can back out
     $('asmErr').textContent = 'ASSEMBLY: ' + (err as Error).message;
     $('asmErr').style.display = 'block';
@@ -50,6 +54,57 @@ function rebuild(): void {
   syncLegLengths();
   updateDeltas();
   update();
+}
+
+/**
+ * A measured spindle that the current upper arm can't reach is a real shop
+ * situation — the fix on the car is turning the heims. Offer exactly that:
+ * OK = find the smallest equal change to both upper leg lengths that makes
+ * the corner assemble, No = undo the edit (restore the last good state).
+ */
+function offerArmFix(err: AssemblyError): boolean {
+  const side = err.side!;
+  const ok = window.confirm(
+    `${err.message}\n\nThe ${side === 'R' ? 'RIGHT' : 'LEFT'} upper control arm leg lengths `
+    + 'will have to change to assemble this spindle.\n\n'
+    + 'OK — fit the upper arm legs to the spindle\nCancel — undo the change',
+  );
+  if (!ok) {
+    try {
+      const saved = localStorage.getItem(AUTOSAVE_KEY);
+      if (saved) {
+        const loaded = loadStateJSON(saved);
+        front = loaded.front;
+        setup = loaded.setup;
+      }
+    } catch { /* nothing to restore */ }
+    fixingArms = true;
+    rebuildForm(); syncAdjInputs(); rebuild();
+    fixingArms = false;
+    return true;
+  }
+  // search the smallest equal-length change (±4", 0.05" steps) that assembles
+  for (let i = 1; i <= 80; i++) {
+    for (const d of [i * 0.05, -i * 0.05]) {
+      const trial: FrontEnd = JSON.parse(JSON.stringify(front));
+      trial.corners[side].upperArm.legFront.baseLength += d;
+      trial.corners[side].upperArm.legRear.baseLength += d;
+      try {
+        assembleFront(trial, setup);
+      } catch { continue; }
+      front = trial;
+      fixingArms = true;
+      rebuildForm(); syncAdjInputs(); rebuild();
+      fixingArms = false;
+      $('asmErr').textContent =
+        `ARM FIT: ${side} upper legs ${d > 0 ? 'lengthened' : 'shortened'} ${Math.abs(d).toFixed(2)}" each to reach the spindle — check the part card`;
+      $('asmErr').style.display = 'block';
+      setTimeout(() => { $('asmErr').style.display = 'none'; }, 6000);
+      return true;
+    }
+  }
+  window.alert('Could not fit the upper arm to this spindle within ±4" — check the picked points.');
+  return false;
 }
 
 function inputs() {

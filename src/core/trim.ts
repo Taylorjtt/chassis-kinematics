@@ -77,6 +77,7 @@ export function assembleFront(front: FrontEnd, setup: Setup): FrontAssembly {
     if (Math.abs(landed - stat.rideTarget) > 0.01) {
       throw new AssemblyError(
         `${side}: ride trim failed — wheel lands at ${landed.toFixed(3)}" vs target ${stat.rideTarget.toFixed(3)}"`,
+        side,
       );
     }
     stat.shockLenTrim = shockLenAt(stat, stat.trimTheta);
