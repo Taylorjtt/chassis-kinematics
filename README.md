@@ -37,9 +37,13 @@ reference/   suspension_sim.html — the v4 prototype, ground truth
 
 ## Conventions (hard-won — do not "fix")
 
-- Frame: x forward, y right (+), z up. Left geometry is real, never
+- Frame: x forward, z up, **+y = the driver's LEFT** (the right-handed third
+  axis — note the spec's original "y right, z up, x fwd" is a left-handed
+  declaration and was corrected once real scans met the math). Sides are
+  always labeled from the DRIVER's perspective. Left geometry is real, never
   implicitly mirrored; side-symmetric part locals use a kingpin/forward/
-  **outboard** basis so one part card fits either side.
+  **outboard** basis so one part card fits either side. Save files carry a
+  version; v1 saves (pre-fix) get their side labels migrated on load.
 - Toe-in positive, reported in inches across a configurable gauge diameter.
   Camber negative = top in. Shock travel positive = compression.
 - Ride trim runs the FULL chain including the tie-rod ψ solve (ψ moves the

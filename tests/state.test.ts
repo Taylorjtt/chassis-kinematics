@@ -45,14 +45,15 @@ describe('v4 importer', () => {
   });
 
   it('folds v4 length adjustments (lal/ual/tie) into the parts', () => {
+    // v4's "R" corner is the +y corner = the app's LEFT (driver) side
     const hp = clone(V4_DEFAULT);
     hp.R.adj = { uio: 0, uud: 0, ucs: 0, lio: 0, lud: 0, tie: 0.1, lal: 0.25, ual: -0.2 };
     const { front, setup } = importV4(hp);
     const base = importV4(clone(V4_DEFAULT)).front;
-    expect(front.corners.R.lowerArm.length).toBeCloseTo(base.corners.R.lowerArm.length + 0.25, 2);
-    expect(front.corners.R.tieRod.baseLength).toBeCloseTo(base.corners.R.tieRod.baseLength + 0.1, 6);
-    expect(front.corners.R.upperArm.legFront.baseLength)
-      .toBeLessThan(base.corners.R.upperArm.legFront.baseLength);
+    expect(front.corners.L.lowerArm.length).toBeCloseTo(base.corners.L.lowerArm.length + 0.25, 2);
+    expect(front.corners.L.tieRod.baseLength).toBeCloseTo(base.corners.L.tieRod.baseLength + 0.1, 6);
+    expect(front.corners.L.upperArm.legFront.baseLength)
+      .toBeLessThan(base.corners.L.upperArm.legFront.baseLength);
     expect(() => assembleFront(front, setup)).not.toThrow();
   });
 
@@ -60,10 +61,10 @@ describe('v4 importer', () => {
     const hp = clone(V4_DEFAULT);
     hp.R.adj = { uio: 0.15, uud: -0.1, ucs: 0.05, lio: 0, lud: 0, tie: 0, lal: 0, ual: 0 };
     const { front, setup } = importV4(hp);
-    expect(setup.corners.R.slugs.uio).toBe(0.15);
+    expect(setup.corners.L.slugs.uio).toBe(0.15);   // v4 "R" = app LEFT
     const fa = assembleFront(front, setup);
     // moves came from a car measured at -1.0° camber; slugs move it away
-    expect(fa.statR.static!.camber).not.toBeCloseTo(-1.0, 1);
+    expect(fa.statL.static!.camber).not.toBeCloseTo(-1.0, 1);
   });
 });
 
@@ -78,6 +79,24 @@ describe('save / load', () => {
     expect(b.statR.static!.camber).toBeCloseTo(a.statR.static!.camber, 9);
     expect(b.statR.static!.toe).toBeCloseTo(a.statR.static!.toe, 9);
     expect(loaded.ui).toEqual({ mode: 'wheel' });
+  });
+
+  it('migrates v1 saves: side labels swap, coordinates stay (+y = LEFT now)', () => {
+    const { front, setup } = defaultState();
+    // fabricate a genuine v1 file: same physical car, but the +y side is
+    // labeled "R" (the old, pre-driver-perspective labeling)
+    const old = JSON.parse(serializeState(front, setup));
+    old.version = 1;
+    old.front.chassis.sides = { R: front.chassis.sides.L, L: front.chassis.sides.R };
+    old.front.corners = { R: front.corners.L, L: front.corners.R };
+    old.setup.corners = { R: setup.corners.L, L: setup.corners.R };
+    old.setup.measured = { R: setup.measured.L, L: setup.measured.R };
+    const loaded = loadStateJSON(JSON.stringify(old));
+    // after migration the labels are back to driver-perspective truth
+    expect(loaded.front.chassis.sides.L).toEqual(front.chassis.sides.L);
+    expect(loaded.front.chassis.sides.R).toEqual(front.chassis.sides.R);
+    const fa = assembleFront(loaded.front, loaded.setup);
+    expect(fa.statL.static!.camber).toBeCloseTo(-1.0, 2);
   });
 
   it('reads a v4 setup file (HP wrapper form)', () => {
@@ -134,8 +153,8 @@ describe('spindle calibration fallback (§5)', () => {
 describe('armPickLengths (scan pick on the arm, any droop)', () => {
   it('recovers the part spec from a fully drooped LBJ pick', () => {
     const { front } = defaultState();
-    const cs = front.chassis.sides.R;
-    const la = front.corners.R.lowerArm;   // imported: axial 7, radial 19.5, drop 0.4
+    const cs = front.chassis.sides.L;      // +y side (v4 default "R" data)
+    const la = front.corners.L.lowerArm;   // imported: axial 7, radial 19.5, drop 0.4
     // reconstruct the ride-height LBJ, then droop the arm 28° about its pivot axis
     const pf = Va(cs.lowerFront), pr = Va(cs.lowerRear);
     const u = pr.clone().sub(pf).normalize();
@@ -147,7 +166,7 @@ describe('armPickLengths (scan pick on the arm, any droop)', () => {
   });
   it('is exact at ride height too', () => {
     const { front } = defaultState();
-    const got = armPickLengths(front.chassis.sides.R, [1.0, 24.5, 3.8], 0.4);
+    const got = armPickLengths(front.chassis.sides.L, [1.0, 24.5, 3.8], 0.4);
     expect(got.axial).toBeCloseTo(7, 3);
     expect(got.radial).toBeCloseTo(19.5, 3);
   });

@@ -38,16 +38,17 @@ describe('subsample', () => {
 
 describe('chassis-point alignment (drooped, wheels-off scan)', () => {
   // synthetic EinScan-style picks in mm. Car floats 500mm up on stands;
-  // pivots match the app default geometry (x ±8", out 5", equal heights);
-  // hub is at full droop (BELOW the pivot plane) and 2" forward of the
-  // pivot-span midpoint to exercise the x-origin shift.
+  // pivots match the app default geometry (x ±8", out 5", equal heights;
+  // +y = the driver's LEFT); the hub is at full droop (BELOW the pivot
+  // plane) and 2" forward of the pivot-span midpoint to exercise the
+  // x-origin shift.
   const IN = 25.4;
   const picks = (): ChassisPicks => ({
-    lf: new Vector3(8 * IN, -5 * IN, 500),
-    lr: new Vector3(-8 * IN, -5 * IN, 500),
-    rf: new Vector3(8 * IN, 5 * IN, 500),
-    rr: new Vector3(-8 * IN, 5 * IN, 500),
-    hub: new Vector3(2 * IN, 31 * IN, 500 - 6 * IN),
+    lf: new Vector3(8 * IN, 5 * IN, 500),
+    lr: new Vector3(-8 * IN, 5 * IN, 500),
+    rf: new Vector3(8 * IN, -5 * IN, 500),
+    rr: new Vector3(-8 * IN, -5 * IN, 500),
+    hub: new Vector3(2 * IN, 31 * IN, 500 - 6 * IN),   // left hub, drooped
   });
 
   it('maps pivots to the entered ride height with the hub at x=0', () => {
@@ -56,11 +57,11 @@ describe('chassis-point alignment (drooped, wheels-off scan)', () => {
       unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
     });
     expect(res.frontSpanIn).toBeCloseTo(10, 3);           // LF<->RF = 2 x 5"
-    expect(res.pivots.lf).toEqual([6, -5, 4.2]);          // x: 8 - 2 (hub shift)
-    expect(res.pivots.rr).toEqual([-10, 5, 4.2]);
+    expect(res.pivots.lf).toEqual([6, 5, 4.2]);           // x: 8 - 2 (hub shift)
+    expect(res.pivots.rr).toEqual([-10, -5, 4.2]);
     const hub = picks().hub.applyMatrix4(scan.group.matrix);
     expect(hub.x).toBeCloseTo(0, 3);                      // axle station
-    expect(hub.y).toBeCloseTo(31, 3);
+    expect(hub.y).toBeCloseTo(31, 3);                     // left hub stays +y
     expect(hub.z).toBeCloseTo(4.2 - 6, 3);                // droop preserved
   });
 
@@ -78,7 +79,7 @@ describe('chassis-point alignment (drooped, wheels-off scan)', () => {
       unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
     });
     expect(res.pivots.lf[0]).toBeCloseTo(6, 2);
-    expect(res.pivots.lf[1]).toBeCloseTo(-5, 2);
+    expect(res.pivots.lf[1]).toBeCloseTo(5, 2);
     expect(res.pivots.lf[2]).toBeCloseTo(4.2, 2);
   });
 
@@ -102,8 +103,8 @@ describe('chassis-point alignment (drooped, wheels-off scan)', () => {
     expect(res.swappedLR).toBe(true);
     // output keyed by CAR side — identical to the correctly-labeled case
     expect(res.pivots.lf[0]).toBeCloseTo(6, 2);
-    expect(res.pivots.lf[1]).toBeCloseTo(-5, 2);
-    expect(res.pivots.rf[1]).toBeCloseTo(5, 2);
+    expect(res.pivots.lf[1]).toBeCloseTo(5, 2);
+    expect(res.pivots.rf[1]).toBeCloseTo(-5, 2);
     // and the car mass ends up above the ground, not below it
     const c = scan.contentCenterWorld()!;
     expect(c.z).toBeGreaterThan(4.2);
@@ -116,7 +117,7 @@ describe('chassis-point alignment (drooped, wheels-off scan)', () => {
       unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
     });
     expect(res.swappedLR).toBe(false);
-    expect(res.pivots.lf[1]).toBeCloseTo(-5, 2);
+    expect(res.pivots.lf[1]).toBeCloseTo(5, 2);
   });
 
   it('labeled picks make up/forward deterministic — no floor needed', () => {
@@ -133,7 +134,7 @@ describe('chassis-point alignment (drooped, wheels-off scan)', () => {
       unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
     });
     expect(res.pivots.lf[0]).toBeGreaterThan(0);          // front pivot forward
-    expect(res.pivots.lf[1]).toBeCloseTo(-5, 2);          // left is left
+    expect(res.pivots.lf[1]).toBeCloseTo(5, 2);           // left is left (+y)
     const hub = picks().hub.applyMatrix4(T).applyMatrix4(scan.group.matrix);
     expect(hub.z).toBeLessThan(4.2);                      // droop still below pivots
   });

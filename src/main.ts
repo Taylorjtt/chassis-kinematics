@@ -174,8 +174,8 @@ function updateDeltas(): void {
     };
   };
   const R = d('statR'), L = d('statL');
-  const trk = (fa.statR.static!.WC.y - fa.statL.static!.WC.y)
-    - (baseline.statR.static!.WC.y - baseline.statL.static!.WC.y);
+  const trk = (fa.statL.static!.WC.y - fa.statR.static!.WC.y)
+    - (baseline.statL.static!.WC.y - baseline.statR.static!.WC.y);
   el.innerHTML =
     `Δ vs baseline — camber <b>L ${fmt(L.camb, 2)}° R ${fmt(R.camb, 2)}°</b>`
     + ` · caster <b>L ${fmt(L.cast, 2)}° R ${fmt(R.cast, 2)}°</b><br>`
@@ -203,7 +203,7 @@ function updateHUD(m: FrontState): void {
   $('sCastL').textContent = fmt(sL.casterLive, 1); $('sCastR').textContent = fmt(sR.casterLive, 1);
   $('sToeL').textContent = fmt(toeInches(sL.toe, gd), 3); $('sToeR').textContent = fmt(toeInches(sR.toe, gd), 3);
   $('sTotToe').textContent = fmt(toeInches(sL.toe, gd) + toeInches(sR.toe, gd), 3);
-  $('sTrack').textContent = (sR.WC.y - sL.WC.y).toFixed(2) + '"';
+  $('sTrack').textContent = (sL.WC.y - sR.WC.y).toFixed(2) + '"';
   $('hWtL').textContent = fmt(m.wtL, 2); $('hWtR').textContent = fmt(m.wtR, 2);
   $('hStL').textContent = fmt(m.stkL, 2); $('hStR').textContent = fmt(m.stkR, 2);
   $('hMrL').textContent = m.mrL.toFixed(2); $('hMrR').textContent = m.mrR.toFixed(2);
@@ -659,7 +659,7 @@ function pickDone(p: Vector3): void {
  *  time, so every side-specific pick is ROUTED by where it actually landed
  *  (y sign), and the label is just a hint. */
 function sideOfPick(p: Vector3, intended: Side | null): Side {
-  const actual: Side = p.y >= 0 ? 'R' : 'L';
+  const actual: Side = p.y >= 0 ? 'L' : 'R';   // +y = LEFT (driver side)
   if (intended && actual !== intended) {
     $('scanStatus').style.color = 'var(--good)';
     $('scanStatus').textContent =
@@ -708,7 +708,7 @@ function handlePickReq(req: PickRequest): void {
     case 'tro':   // tie rod is a rigid link; inner end is chassis-mounted
       startPick(`${side} tie rod OUTER end (steering arm ball)`, (p) => {
         const s = sideOfPick(p, req.side);
-        const tri = s === 'R' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+        const tri = s === 'L' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
         const c = setup.corners[s];
         const tr = front.corners[s].tieRod;
         tr.baseLength = r3(distTo(tri, p) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
@@ -781,7 +781,7 @@ function applySpindleAndArms(side: Side, lbj: Vector3, ubj: Vector3, tro: Vector
   const ua = corner.upperArm;
   ua.legFront.baseLength = r3(distTo(cs.upperFront, ubj) - c.heimTurnsFront / ua.legFront.heimPitchTPI);
   ua.legRear.baseLength = r3(distTo(cs.upperRear, ubj) - c.heimTurnsRear / ua.legRear.heimPitchTPI);
-  const tri = side === 'R' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+  const tri = side === 'L' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
   const tr = corner.tieRod;
   tr.baseLength = r3(distTo(tri, tro) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
 }
@@ -876,7 +876,7 @@ function measureWizard(): void {
         got[idx] = p;
         if (!last) return;
         const ys = got.filter((q): q is Vector3 => !!q).map((q) => q.y);
-        resolved = ys.reduce((a2, b2) => a2 + b2, 0) / ys.length >= 0 ? 'R' : 'L';
+        resolved = ys.reduce((a2, b2) => a2 + b2, 0) / ys.length >= 0 ? 'L' : 'R';
         if (resolved !== intended) {
           $('scanStatus').style.color = 'var(--good)';
           $('scanStatus').textContent =

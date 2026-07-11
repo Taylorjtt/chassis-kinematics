@@ -13,9 +13,10 @@
  *   6. wheel located off the spindle pin
  *
  * Sign/coordinate invariants (hard-won — regression tests must stay):
- *   frame x fwd, y right (+), z up; left geometry is real, never implicitly
- *   mirrored. Any rotation built from a side-symmetric quantity (camber!)
- *   must carry the side sign — v4 had a left-camber sign bug.
+ *   frame x fwd, z up, +y = the driver's LEFT (right-handed: x×y=z). Sides
+ *   are labeled from the DRIVER's perspective. Left geometry is real, never
+ *   implicitly mirrored. Any rotation built from a side-symmetric quantity
+ *   (camber!) must carry the side sign — v4 had a left-camber sign bug.
  *   Toe-in positive. Camber negative = top in. Shock compression positive.
  */
 
@@ -50,7 +51,7 @@ export interface RigidArm {
 }
 
 export function makeRigidArm(pf: Vec3, pr: Vec3, side: Side): RigidArm {
-  const sign = side === 'R' ? 1 : -1;
+  const sign = side === 'L' ? 1 : -1;   // +y = LEFT (driver side)
   const dir = pr.clone().sub(pf).normalize();
   const out = V(0, sign, 0);
   const r0dir = out.clone().sub(dir.clone().multiplyScalar(dir.dot(out))).normalize();
@@ -84,7 +85,7 @@ export function seatAttachment(arm: RigidArm, seat: ArmSeat): ArmAttachment {
 export interface KingpinFrame { origin: Vec3; k: Vec3; f: Vec3; o: Vec3 }
 
 export function kingpinFrame(LBJ: Vec3, UBJ: Vec3, side: Side): KingpinFrame {
-  const sign = side === 'R' ? 1 : -1;
+  const sign = side === 'L' ? 1 : -1;   // +y = LEFT (driver side)
   const k = UBJ.clone().sub(LBJ).normalize();
   const x = V(1, 0, 0);
   const f = x.clone().sub(k.clone().multiplyScalar(k.dot(x))).normalize();
@@ -179,7 +180,7 @@ export function spindleLocals(spindle: Spindle, wheel: WheelTire): SpindleLocals
  * ground coordinates with the chassis at its setup pose.
  */
 export interface CornerStatic {
-  side: number;                 // +1 right, -1 left
+  side: number;                 // +1 left (driver side, +y), -1 right
   sideKey: Side;
   // adjusted pickup points (world)
   lowerFront: Vec3; lowerRear: Vec3;
@@ -215,7 +216,7 @@ function applyFramePose(p: Vec3, setup: Setup): Vec3 {
 }
 
 function chassisSidePoints(cs: ChassisSide, setup: Setup, corner: CornerSetup, side: Side) {
-  const sign = side === 'R' ? 1 : -1;
+  const sign = side === 'L' ? 1 : -1;   // +y = LEFT (driver side)
   const io = (v: number) => V(0, sign * v, 0);   // + = toward the wheel
   const a = corner.slugs;
   const P = (t: T3) => applyFramePose(Va(t), setup);
@@ -336,7 +337,7 @@ export function fitUpperLegsToSpindle(
 export function buildCornerStatic(
   chassis: Chassis, parts: CornerParts, setup: Setup, side: Side,
 ): CornerStatic {
-  const sign = side === 'R' ? 1 : -1;
+  const sign = side === 'L' ? 1 : -1;   // +y = LEFT (driver side)
   const corner = setup.corners[side];
   const pts = chassisSidePoints(chassis.sides[side], setup, corner, side);
 
@@ -489,7 +490,8 @@ export class SteeringLinkage {
     );
     this.warmBeta = beta;
     const CLR = rotAboutAxis(CLR0, Pi, Z, beta);
-    return { CLL, CLR, Pp, Pi, TRI_L: CLL.clone(), TRI_R: CLR.clone() };
+    // idler end sits at +y = the driver's LEFT tie rod; pitman feeds the RIGHT
+    return { CLL, CLR, Pp, Pi, TRI_L: CLR.clone(), TRI_R: CLL.clone() };
   }
 }
 

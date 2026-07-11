@@ -62,7 +62,7 @@ export interface FrontState {
   steerA: number;
   ack: number | null;           // Ackermann %
   tot: number | null;           // toe-out on turns, deg
-  trackWidth: number;           // WC_R.y - WC_L.y
+  trackWidth: number;           // WC_L.y - WC_R.y (+y = LEFT/driver side)
 }
 
 export function solveFrontState(fa: FrontAssembly, wheelbase: number, inp: MotionInputs): FrontState {
@@ -86,7 +86,7 @@ export function solveFrontState(fa: FrontAssembly, wheelbase: number, inp: Motio
   if (Math.abs(inp.steerDeg) > 3) {
     const dR = Math.abs(steerR), dL = Math.abs(steerL);
     const din = Math.max(dR, dL), dout = Math.min(dR, dL);
-    const track = statR.WC0.y - statL.WC0.y;
+    const track = statL.WC0.y - statR.WC0.y;
     const ideal = track / wheelbase;
     const actual = 1 / Math.tan(dout * DEG) - 1 / Math.tan(din * DEG);
     if (isFinite(actual) && Math.abs(ideal) > 1e-6) ack = (actual / ideal) * 100;
@@ -95,7 +95,7 @@ export function solveFrontState(fa: FrontAssembly, wheelbase: number, inp: Motio
   return {
     cR, cL, st, rc, wtR, wtL, stkR, stkL, mrR, mrL,
     steerR, steerL, steerA: inp.steerDeg, ack, tot,
-    trackWidth: cR.WC.y - cL.WC.y,
+    trackWidth: cL.WC.y - cR.WC.y,
   };
 }
 

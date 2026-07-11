@@ -26,7 +26,7 @@ import { assembleFront } from './trim';
 export function axisFromMeasured(
   side: Side, camberDeg: number, toeInches: number, gaugeDia: number,
 ): Vec3 {
-  const sign = side === 'R' ? 1 : -1;
+  const sign = side === 'L' ? 1 : -1;   // +y = LEFT (driver side)
   let ax = V(0, sign, 0);
   ax = rotAboutAxis(ax, V(0, 0, 0), V(1, 0, 0), -camberDeg * DEG * sign);
   ax = rotAboutAxis(ax, V(0, 0, 0), V(0, 0, 1), -toeDegFromInches(toeInches, gaugeDia) * DEG * sign);

@@ -57,7 +57,7 @@ export function setFrontValue(front: FrontEnd, path: string, v: number): void {
 
 function pointField(ctx: Ctx, label: string, path: string, side: Side | null): string {
   const arr = getPath(ctx.front, path) as T3;
-  const yDisp = side === 'L' ? -arr[1] : arr[1];
+  const yDisp = side === 'R' ? -arr[1] : arr[1];   // +y = LEFT; "out" always +
   const ylab = side ? 'out' : 'y';
   const f = (ax: number, lab: string, value: number) =>
     `<div class="f"><i>${lab}</i><input type="number" step="0.1" value="${+value.toFixed(4)}" `
@@ -207,7 +207,7 @@ export function buildPartsForm(
       const root = inp.dataset.root === 'setup' ? ctx.setup : ctx.front;
       if (inp.dataset.ax !== undefined) {
         const ax = +inp.dataset.ax;
-        if (ax === 1 && inp.dataset.side === 'L') val = -val;
+        if (ax === 1 && inp.dataset.side === 'R') val = -val;   // +y = LEFT
         const arr = getPath(ctx.front, inp.dataset.path!) as T3;
         arr[ax] = val;
       } else {

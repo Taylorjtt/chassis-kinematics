@@ -88,7 +88,7 @@ export const V4_DEFAULT: V4HP = {
 /** Decompose a point on an arm into {axial, radial, drop} arm-local seat
  *  coordinates. r0dir = horizontal outboard, n0dir = up (see makeRigidArm). */
 function armSeatFrom(pf: Vec3, pr: Vec3, side: Side, p: Vec3): ArmSeat {
-  const sign = side === 'R' ? 1 : -1;
+  const sign = side === 'L' ? 1 : -1;   // +y = LEFT (driver side)
   const u = pr.clone().sub(pf).normalize();
   const out = V(0, sign, 0);
   const r0dir = out.clone().sub(u.clone().multiplyScalar(u.dot(out))).normalize();
@@ -121,7 +121,8 @@ export function armPickLengths(
 }
 
 function importCorner(hp: V4HP, side: Side): { parts: CornerParts; rideTargetWCz: number } {
-  const d = side === 'R' ? hp.R : hp.L;
+  // v4 labeled the +y corner "R"; physically +y is the driver's LEFT
+  const d = side === 'L' ? hp.R : hp.L;
   const adj = { ...zeroV4Adj(), ...(d.adj ?? {}) };
   const lf = Va(d.lowerFront), lr = Va(d.lowerRear), LBJ = Va(d.LBJ);
   const uf = Va(d.upperFront), ur = Va(d.upperRear), UBJ = Va(d.UBJ);
@@ -175,7 +176,8 @@ function importCorner(hp: V4HP, side: Side): { parts: CornerParts; rideTargetWCz
   };
 
   // ---- tie rod: physical length at the measured state + v4 length adj
-  const TRI = Va(side === 'R' ? hp.common.idlerArmEnd : hp.common.pitmanArmEnd);
+  // (the idler sits at +y = LEFT side)
+  const TRI = Va(side === 'L' ? hp.common.idlerArmEnd : hp.common.pitmanArmEnd);
   const tieRod: TieRod = {
     kind: 'tieRod', id: partId('tr'), name: `Tie rod ${side} (imported)`,
     baseLength: TRO.distanceTo(TRI) + adj.tie,
@@ -198,7 +200,7 @@ export interface ImportedState { front: FrontEnd; setup: Setup }
 
 export function importV4(hp: V4HP): ImportedState {
   const side = (s: Side): ChassisSide => {
-    const d = s === 'R' ? hp.R : hp.L;
+    const d = s === 'L' ? hp.R : hp.L;   // v4 "R" = +y = driver's LEFT
     return {
       lowerFront: d.lowerFront, lowerRear: d.lowerRear,
       upperFront: d.upperFront, upperRear: d.upperRear,
@@ -216,7 +218,7 @@ export function importV4(hp: V4HP): ImportedState {
   const setup = defaultSetup();
   setup.toeGaugeDia = hp.common.toeGaugeDia;
   (['R', 'L'] as Side[]).forEach((s) => {
-    const d = s === 'R' ? hp.R : hp.L;
+    const d = s === 'L' ? hp.R : hp.L;   // v4 "R" = +y = driver's LEFT
     const adj = { ...zeroV4Adj(), ...(d.adj ?? {}) };
     const c = setup.corners[s];
     c.slugs = { uio: adj.uio, uud: adj.uud, ucs: adj.ucs, lio: adj.lio, lud: adj.lud };
@@ -238,7 +240,7 @@ export function defaultState(): ImportedState {
 
 export interface SaveFile {
   app: 'clr-suspension-builder';
-  version: 1;
+  version: number;   // 2+: sides labeled from the driver's perspective (+y = L)
   saved: string;
   front: FrontEnd;
   setup: Setup;
@@ -247,18 +249,34 @@ export interface SaveFile {
 
 export function serializeState(front: FrontEnd, setup: Setup, ui?: Record<string, unknown>): string {
   const data: SaveFile = {
-    app: 'clr-suspension-builder', version: 1,
+    app: 'clr-suspension-builder', version: 2,
     saved: new Date().toISOString(),
     front, setup, ui,
   };
   return JSON.stringify(data, null, 1);
 }
 
+/** v1 saves labeled the +y side "R"; physically +y is the driver's LEFT.
+ *  Coordinates stay put — only the side labels swap. */
+function migrateV1Sides(front: FrontEnd, setup: Setup): void {
+  const cs = front.chassis.sides;
+  front.chassis.sides = { R: cs.L, L: cs.R };
+  const c = front.corners;
+  front.corners = { R: c.L, L: c.R };
+  const sc = setup.corners;
+  setup.corners = { R: sc.L, L: sc.R };
+  const m = setup.measured;
+  setup.measured = { R: m.L, L: m.R };
+}
+
 /** Load either a native save file or a v4 setup file (auto-detected). */
 export function loadStateJSON(text: string): ImportedState & { ui?: Record<string, unknown> } {
   const data = JSON.parse(text);
   if (data && data.app === 'clr-suspension-builder' && data.front && data.setup) {
-    return { front: data.front, setup: normalizeSetup(data.setup), ui: data.ui };
+    const front = data.front as FrontEnd;
+    const setup = normalizeSetup(data.setup);
+    if ((data.version ?? 1) < 2) migrateV1Sides(front, setup);
+    return { front, setup, ui: data.ui };
   }
   // v4 file: {app:'sla-suspension-sim', HP:{common,R,L}, ui} or a bare HP
   const hp: V4HP | null =

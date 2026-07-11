@@ -301,11 +301,12 @@ function alignMatrixFrom(p: ChassisPicks, f: number, pivotHeightIn: number): THR
   const frontMid = p.lf.clone().add(p.rf).multiplyScalar(0.5);
   const rearMid = p.lr.clone().add(p.rr).multiplyScalar(0.5);
   const mid = leftMid.clone().add(rightMid).multiplyScalar(0.5);
-  const a = rightMid.clone().sub(leftMid);           // ~right
+  // +y = the driver's LEFT (right-handed with x fwd, z up)
+  const aLeft = leftMid.clone().sub(rightMid);       // ~left
   const b = frontMid.clone().sub(rearMid);           // ~forward
-  const z = b.clone().cross(a).normalize();          // fwd × right = up
+  const z = b.clone().cross(aLeft).normalize();      // fwd × left = up
   const x = b.clone().sub(z.clone().multiplyScalar(z.dot(b))).normalize();
-  const y = z.clone().cross(x).normalize();
+  const y = z.clone().cross(x).normalize();          // left, re-derived
 
   const R = new THREE.Matrix4().makeBasis(x, y, z).transpose();
   const T0 = new THREE.Matrix4().makeScale(f, f, f)

@@ -3,10 +3,11 @@
  * object: a `kind`, the part's own geometry in its own local frame, and an
  * id/name so a garage/parts-bin library is possible later.
  *
- * Frame coordinates: x forward, y right (+), z up. Chassis pickup points are
- * recorded as measured at reference ride height (that's what a racer with a
- * tape measure produces); the chassis pose over ground is SETUP, not part
- * data.
+ * Frame coordinates: x forward, z up, +y = the driver's LEFT (the
+ * right-handed third axis; sides are always labeled from the DRIVER's
+ * perspective). Chassis pickup points are recorded as measured at reference
+ * ride height (that's what a racer with a tape measure produces); the
+ * chassis pose over ground is SETUP, not part data.
  *
  * Left/right are fully independent — circle-track asymmetry is the norm.
  * Side-symmetric quantities are stored in a side-aware local basis
