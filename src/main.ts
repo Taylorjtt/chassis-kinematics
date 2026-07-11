@@ -498,9 +498,15 @@ scene.canvas.addEventListener('pointerup', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && pickCb) {
     alignPicks = [];
-    scan.clearMarkers();
     endPick();
+    cancelWizard();
+    scan.clearMarkers();
     scene.render();
+  }
+  const t = e.target as HTMLElement;
+  if (e.key.toLowerCase() === 's' && pickCb
+    && t?.tagName !== 'INPUT' && t?.tagName !== 'SELECT' && t?.tagName !== 'TEXTAREA') {
+    wizardSkip();
   }
 });
 
@@ -578,6 +584,7 @@ $('scanFile').addEventListener('change', async (e) => {
   try {
     await scan.load(f);
     ($('scanAlign') as HTMLButtonElement).disabled = false;
+    ($('scanMeasure') as HTMLButtonElement).disabled = false;
     $('scanScaleRow').style.display = 'flex';
     const hEl = $('scanPivotH') as HTMLInputElement;
     if (!hEl.value) hEl.value = String(front.chassis.sides.R.lowerFront[2]);
@@ -591,6 +598,7 @@ $('scanFile').addEventListener('change', async (e) => {
   }
 });
 $('scanAlign').addEventListener('click', alignWizard);
+$('scanMeasure').addEventListener('click', measureWizard);
 $('scanOpacity').addEventListener('input', () => {
   scan.setOpacity(+($('scanOpacity') as HTMLInputElement).value);
   scene.render();
@@ -602,6 +610,7 @@ $('scanVisible').addEventListener('change', () => {
 $('scanClear').addEventListener('click', () => {
   scan.clear();
   ($('scanAlign') as HTMLButtonElement).disabled = true;
+  ($('scanMeasure') as HTMLButtonElement).disabled = true;
   $('scanScaleRow').style.display = 'none';
   $('scanStatus').textContent = '';
   scene.render();
@@ -692,26 +701,7 @@ function handlePickReq(req: PickRequest): void {
           startPick(`${side} spindle 3/4 — tie rod OUTER ball center`, (tro) => {
             scan.addMarker(tro, 0x36c2ff); scene.render();
             startPick(`${side} spindle 4/4 — hub FACE center`, (hub) => {
-              const kf = kingpinFrame(coreV(lbj.x, lbj.y, lbj.z), coreV(ubj.x, ubj.y, ubj.z), side);
-              const spindle = corner.spindle;
-              spindle.height = r3(lbj.distanceTo(ubj));
-              spindle.calibrated = {
-                ...spindle.calibrated,               // keep a calibrated pin axis if there is one
-                wcLocal: undefined,                  // hub face + wheel offset now governs
-                hubFaceLocal: toKingpinLocal(kf, coreV(hub.x, hub.y, hub.z)).map(r3) as [number, number, number],
-                troLocal: toKingpinLocal(kf, coreV(tro.x, tro.y, tro.z)).map(r3) as [number, number, number],
-              };
-              // the same clicks are the arm/tie-rod measurements — fill them too
-              const lower = armPickLengths(cs, [lbj.x, lbj.y, lbj.z], corner.lowerArm.bjDrop);
-              corner.lowerArm.bjAxial = r3(lower.axial);
-              corner.lowerArm.length = r3(lower.radial);
-              const c = setup.corners[side];
-              const ua = corner.upperArm;
-              ua.legFront.baseLength = r3(distTo(cs.upperFront, ubj) - c.heimTurnsFront / ua.legFront.heimPitchTPI);
-              ua.legRear.baseLength = r3(distTo(cs.upperRear, ubj) - c.heimTurnsRear / ua.legRear.heimPitchTPI);
-              const tri = side === 'R' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
-              const tr = corner.tieRod;
-              tr.baseLength = r3(distTo(tri, tro) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
+              applySpindleAndArms(side, lbj, ubj, tro, hub);
               pickDone(hub);
             });
           });
@@ -719,6 +709,171 @@ function handlePickReq(req: PickRequest): void {
       });
       break;
   }
+}
+
+/** Fold the four spindle picks into the parts: spindle rigid geometry plus
+ *  the lower arm, both upper legs, and the tie rod (the same physical points
+ *  measure all of them). */
+function applySpindleAndArms(side: Side, lbj: Vector3, ubj: Vector3, tro: Vector3, hub: Vector3): void {
+  const corner = front.corners[side];
+  const cs = front.chassis.sides[side];
+  const kf = kingpinFrame(coreV(lbj.x, lbj.y, lbj.z), coreV(ubj.x, ubj.y, ubj.z), side);
+  const spindle = corner.spindle;
+  spindle.height = r3(lbj.distanceTo(ubj));
+  spindle.calibrated = {
+    ...spindle.calibrated,               // keep a calibrated pin axis if there is one
+    wcLocal: undefined,                  // hub face + wheel offset now governs
+    hubFaceLocal: toKingpinLocal(kf, coreV(hub.x, hub.y, hub.z)).map(r3) as [number, number, number],
+    troLocal: toKingpinLocal(kf, coreV(tro.x, tro.y, tro.z)).map(r3) as [number, number, number],
+  };
+  const lower = armPickLengths(cs, [lbj.x, lbj.y, lbj.z], corner.lowerArm.bjDrop);
+  corner.lowerArm.bjAxial = r3(lower.axial);
+  corner.lowerArm.length = r3(lower.radial);
+  const c = setup.corners[side];
+  const ua = corner.upperArm;
+  ua.legFront.baseLength = r3(distTo(cs.upperFront, ubj) - c.heimTurnsFront / ua.legFront.heimPitchTPI);
+  ua.legRear.baseLength = r3(distTo(cs.upperRear, ubj) - c.heimTurnsRear / ua.legRear.heimPitchTPI);
+  const tri = side === 'R' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+  const tr = corner.tieRod;
+  tr.baseLength = r3(distTo(tri, tro) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
+}
+
+/* ---------------- whole-car guided measure ----------------
+ * The one process: import -> align -> click every chassis piece. Nothing
+ * assembles until the LAST click, so half-measured states can never throw
+ * "spindle unreachable" at you mid-stream. */
+let wizardRestore: string | null = null;
+
+function measureWizard(): void {
+  if (!scan.loaded) { scanNote('load a 3D scan first (scan card, bottom left)'); return; }
+  wizardRestore = JSON.stringify(front);
+  scan.clearMarkers();
+
+  interface WStep { label: string; apply: (p: Vector3) => void; skippable: boolean }
+  const steps: WStep[] = [];
+  const pt = (label: string, path: string, skippable = true) =>
+    steps.push({
+      label, skippable,
+      apply: (p) => setFrontPoint(front, path, [r3(p.x), r3(p.y), r3(p.z)]),
+    });
+
+  // 1) alignment — the four lower pivots + a hub (fills the pivots too)
+  const aPicks: Vector3[] = [];
+  const alignLabels = [
+    'align: LEFT lower arm FRONT pivot',
+    'align: LEFT lower arm REAR pivot',
+    'align: RIGHT lower arm FRONT pivot',
+    'align: RIGHT lower arm REAR pivot',
+    'align: either hub / spindle snout center',
+  ];
+  alignLabels.forEach((label, i) => steps.push({
+    label,
+    skippable: false,
+    apply: (p) => {
+      aPicks.push(p);
+      if (i < 4) return;
+      const actual = parseFloat(($('scanScaleActual') as HTMLInputElement).value);
+      const units = ($('scanUnits') as HTMLSelectElement).value as ScanUnits;
+      const hIn = parseFloat(($('scanPivotH') as HTMLInputElement).value);
+      const res = scan.applyChassisAlignment(
+        { lf: aPicks[0], lr: aPicks[1], rf: aPicks[2], rr: aPicks[3], hub: aPicks[4] },
+        {
+          pivotHeightIn: isFinite(hIn) ? hIn : front.chassis.sides.R.lowerFront[2],
+          ...(isFinite(actual) && actual > 0
+            ? { actualFrontSpanIn: actual }
+            : { unitToInches: UNIT_TO_INCHES[units] }),
+        },
+      );
+      setFrontPoint(front, 'chassis.sides.L.lowerFront', res.pivots.lf);
+      setFrontPoint(front, 'chassis.sides.L.lowerRear', res.pivots.lr);
+      setFrontPoint(front, 'chassis.sides.R.lowerFront', res.pivots.rf);
+      setFrontPoint(front, 'chassis.sides.R.lowerRear', res.pivots.rr);
+      scene.resetView();
+    },
+  }));
+
+  // 2) steering linkage (center the steering in the scan if you can)
+  pt('steering: pitman PIVOT (box output shaft)', 'chassis.steeringBox.pivot');
+  pt('steering: pitman ARM END (center link left)', 'chassis.steeringBox.pitmanEnd');
+  pt('steering: idler PIVOT', 'chassis.idler.pivot');
+  pt('steering: idler ARM END (center link right)', 'chassis.idler.armEnd');
+
+  // 3) each corner: chassis mounts, then the spindle stack
+  (['R', 'L'] as Side[]).forEach((side) => {
+    const S = side === 'R' ? 'RIGHT' : 'LEFT';
+    pt(`${S}: upper heim mount — FRONT`, `chassis.sides.${side}.upperFront`, false);
+    pt(`${S}: upper heim mount — REAR`, `chassis.sides.${side}.upperRear`, false);
+    pt(`${S}: shock CHASSIS mount`, `chassis.sides.${side}.shockMountUpper`);
+    const sp: Vector3[] = [];
+    const grab = (label: string, last = false) => steps.push({
+      label, skippable: false,
+      apply: (p) => {
+        sp.push(p);
+        if (last) applySpindleAndArms(side, sp[0], sp[1], sp[2], sp[3]);
+      },
+    });
+    grab(`${S}: LOWER ball joint center`);
+    grab(`${S}: UPPER ball joint center`);
+    grab(`${S}: tie rod OUTER ball center`);
+    grab(`${S}: hub FACE center`, true);
+    steps.push({
+      label: `${S}: shock LOWER seat on the arm`,
+      skippable: true,
+      apply: (p) => {
+        const la = front.corners[side].lowerArm;
+        const seat = armPickLengths(front.chassis.sides[side], [p.x, p.y, p.z], la.shockSeat.drop);
+        la.shockSeat.axial = r3(seat.axial);
+        la.shockSeat.radial = r3(seat.radial);
+      },
+    });
+  });
+
+  let idx = 0;
+  const runNext = (): void => {
+    if (idx >= steps.length) { finishWizard(); return; }
+    const s = steps[idx];
+    startPick(
+      `[${idx + 1}/${steps.length}] ${s.label}` + (s.skippable ? '  ·  S skips' : ''),
+      (p) => {
+        scan.addMarker(p, 0x46d18a);
+        scene.render();
+        s.apply(p);
+        idx += 1;
+        runNext();
+      },
+    );
+  };
+  wizardSkip = () => {
+    if (wizardRestore && steps[idx]?.skippable) { idx += 1; runNext(); }
+  };
+  runNext();
+}
+
+let wizardSkip: () => void = () => {};
+
+function finishWizard(): void {
+  wizardRestore = null;
+  endPick();
+  rebuildForm();
+  syncAdjInputs();
+  rebuild();                      // FIRST assembly of the measured car
+  if ($('asmErr').style.display !== 'block') {
+    captureBaseline();
+    update();
+    $('scanStatus').style.color = 'var(--good)';
+    $('scanStatus').textContent = 'car measured from scan ✓ — now enter gauge camber/toe and Calibrate spindles';
+  }
+  setTimeout(() => { scan.clearMarkers(); scene.render(); }, 4000);
+}
+
+function cancelWizard(): void {
+  if (!wizardRestore) return;
+  front = JSON.parse(wizardRestore) as FrontEnd;
+  wizardRestore = null;
+  scan.clearMarkers();
+  rebuildForm();
+  syncAdjInputs();
+  rebuild();
 }
 
 /* ---------------- parts form ---------------- */

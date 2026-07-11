@@ -191,15 +191,19 @@
 
       <div class="card">
         <h4>3D scan (EinScan etc.)</h4>
-        <div class="cardhelp">Load a whole-car scan, align it once, then use
-          the <b>⌖</b> buttons on any measurement to click the point on the
-          scan. On stands at full droop with wheels off is <b>fine</b> — every
-          reference is bolted to the frame. EinScan exports are in <b>mm</b>.
-          Align = click the 4 lower-arm pivots + a hub, and enter how high the
-          lower pivots sit above the ground at ride.</div>
+        <div class="cardhelp"><b>The process:</b> Load scan →
+          <b>Measure whole car</b> — one guided pass that aligns off the four
+          lower-arm pivots, then walks you through every chassis and spindle
+          point (~25 clicks). Nothing assembles until the last click, so
+          half-measured states can't fail on you. On stands at full droop
+          with wheels off is <b>fine</b>. <b>S</b> skips a step ·
+          <b>H</b> hides the model · <b>Esc</b> cancels (undoes everything).</div>
         <div class="btns">
-          <button class="b primary" id="scanLoad">Load scan</button>
-          <button class="b" id="scanAlign" disabled>Align scan</button>
+          <button class="b" id="scanLoad">Load scan</button>
+          <button class="b primary" id="scanMeasure" disabled>⌖ Measure whole car</button>
+        </div>
+        <div class="btns" style="margin-top:6px">
+          <button class="b" id="scanAlign" disabled>Re-align only</button>
         </div>
         <input type="file" id="scanFile" accept=".glb,.gltf,.obj,.stl,.ply,.asc,.xyz" style="display:none">
         <div class="numrow" style="margin-top:8px">
