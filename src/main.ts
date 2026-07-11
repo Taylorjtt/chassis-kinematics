@@ -645,6 +645,15 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const distTo = (t: [number, number, number], p: Vector3) =>
   Math.hypot(t[0] - p.x, t[1] - p.y, t[2] - p.z);
 
+/** The center-link end on a given side of the car — by geometry, not by
+ *  pitman/idler naming (the box can be on either side). */
+function centerLinkEnd(s: Side): [number, number, number] {
+  const pit = front.chassis.steeringBox.pitmanEnd;
+  const idl = front.chassis.idler.armEnd;
+  const pitmanIsLeft = pit[1] > idl[1];
+  return s === 'L' ? (pitmanIsLeft ? pit : idl) : (pitmanIsLeft ? idl : pit);
+}
+
 function pickDone(p: Vector3): void {
   scan.addMarker(p, 0x46d18a);
   setTimeout(() => { scan.clearMarkers(); scene.render(); }, 2500);
@@ -708,7 +717,7 @@ function handlePickReq(req: PickRequest): void {
     case 'tro':   // tie rod is a rigid link; inner end is chassis-mounted
       startPick(`${side} tie rod OUTER end (steering arm ball)`, (p) => {
         const s = sideOfPick(p, req.side);
-        const tri = s === 'L' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+        const tri = centerLinkEnd(s);
         const c = setup.corners[s];
         const tr = front.corners[s].tieRod;
         tr.baseLength = r3(distTo(tri, p) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
@@ -781,7 +790,7 @@ function applySpindleAndArms(side: Side, lbj: Vector3, ubj: Vector3, tro: Vector
   const ua = corner.upperArm;
   ua.legFront.baseLength = r3(distTo(cs.upperFront, ubj) - c.heimTurnsFront / ua.legFront.heimPitchTPI);
   ua.legRear.baseLength = r3(distTo(cs.upperRear, ubj) - c.heimTurnsRear / ua.legRear.heimPitchTPI);
-  const tri = side === 'L' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+  const tri = centerLinkEnd(side);
   const tr = corner.tieRod;
   tr.baseLength = r3(distTo(tri, tro) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
 }
@@ -852,11 +861,12 @@ function measureWizard(): void {
     },
   }));
 
-  // 2) steering linkage (center the steering in the scan if you can)
-  pt('steering: pitman PIVOT (box output shaft)', 'chassis.steeringBox.pivot');
-  pt('steering: pitman ARM END (center link left)', 'chassis.steeringBox.pitmanEnd');
+  // 2) steering linkage — whichever side your box is on; tie rods attach to
+  // the center-link end on their own side by geometry, not by these names
+  pt('steering: pitman PIVOT (steering box output shaft)', 'chassis.steeringBox.pivot');
+  pt('steering: pitman ARM END (where the pitman meets the center link)', 'chassis.steeringBox.pitmanEnd');
   pt('steering: idler PIVOT', 'chassis.idler.pivot');
-  pt('steering: idler ARM END (center link right)', 'chassis.idler.armEnd');
+  pt('steering: idler ARM END (other end of the center link)', 'chassis.idler.armEnd');
 
   // 3) each corner: chassis mounts, then the spindle stack.
   // Side is DETECTED from where the picks land (y sign) — facing the car,

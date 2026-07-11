@@ -490,8 +490,15 @@ export class SteeringLinkage {
     );
     this.warmBeta = beta;
     const CLR = rotAboutAxis(CLR0, Pi, Z, beta);
-    // idler end sits at +y = the driver's LEFT tie rod; pitman feeds the RIGHT
-    return { CLL, CLR, Pp, Pi, TRI_L: CLR.clone(), TRI_R: CLL.clone() };
+    // each tie rod takes the center-link end on ITS side of the car —
+    // decided by GEOMETRY, not by pitman/idler naming (the steering box can
+    // sit on either side; on most GM circle-track chassis it's on the LEFT)
+    const pitmanIsLeft = CLL0.y > CLR0.y;
+    return {
+      CLL, CLR, Pp, Pi,
+      TRI_L: (pitmanIsLeft ? CLL : CLR).clone(),
+      TRI_R: (pitmanIsLeft ? CLR : CLL).clone(),
+    };
   }
 }
 

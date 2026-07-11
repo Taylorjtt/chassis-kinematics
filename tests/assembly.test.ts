@@ -110,6 +110,31 @@ describe('part rigidity under motion + adjustment (< 0.02")', () => {
   });
 });
 
+describe('tie rods never cross the centerline', () => {
+  it('each rod takes the center-link end on its own side (default: idler +y)', () => {
+    const r = rig();
+    const s = r.solve();
+    expect(s.cL.TRI.y).toBeGreaterThan(0);
+    expect(s.cR.TRI.y).toBeLessThan(0);
+    expect(s.cL.TRO.y).toBeGreaterThan(0);
+    expect(s.cR.TRO.y).toBeLessThan(0);
+  });
+  it('holds with the steering box on the LEFT (GM circle-track layout)', () => {
+    const r = rig((front) => {
+      const box = front.chassis.steeringBox, idler = front.chassis.idler;
+      const bp = box.pivot, be = box.pitmanEnd;
+      box.pivot = idler.pivot; box.pitmanEnd = idler.armEnd;
+      idler.pivot = bp; idler.armEnd = be;
+    });
+    const s = r.solve();
+    expect(s.cL.TRI.y).toBeGreaterThan(0);
+    expect(s.cR.TRI.y).toBeLessThan(0);
+    // and the rods still hold their physical length
+    expect(Math.abs(s.cL.TRO.distanceTo(s.cL.TRI) - r.fa.statL.tieLen)).toBeLessThan(0.001);
+    expect(Math.abs(s.cR.TRO.distanceTo(s.cR.TRI) - r.fa.statR.tieLen)).toBeLessThan(0.001);
+  });
+});
+
 describe('assembly failure modes', () => {
   it('throws when the upper legs cannot triangulate the pickup span', () => {
     const { front, setup } = defaultState();

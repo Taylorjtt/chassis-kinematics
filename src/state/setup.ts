@@ -176,8 +176,11 @@ function importCorner(hp: V4HP, side: Side): { parts: CornerParts; rideTargetWCz
   };
 
   // ---- tie rod: physical length at the measured state + v4 length adj
-  // (the idler sits at +y = LEFT side)
-  const TRI = Va(side === 'L' ? hp.common.idlerArmEnd : hp.common.pitmanArmEnd);
+  // (inner end = the center-link end on THIS side, by geometry not by name)
+  const pit = Va(hp.common.pitmanArmEnd), idl = Va(hp.common.idlerArmEnd);
+  const TRI = side === 'L'
+    ? (pit.y > idl.y ? pit : idl)
+    : (pit.y > idl.y ? idl : pit);
   const tieRod: TieRod = {
     kind: 'tieRod', id: partId('tr'), name: `Tie rod ${side} (imported)`,
     baseLength: TRO.distanceTo(TRI) + adj.tie,
