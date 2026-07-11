@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { BufferAttribute, BufferGeometry, Matrix4, Vector3 } from 'three';
-import { ScanManager, parseASC, subsample, UNIT_TO_INCHES } from '../src/ui/scan';
+import { ChassisPicks, ScanManager, parseASC, subsample, UNIT_TO_INCHES } from '../src/ui/scan';
 
 describe('parseASC', () => {
   it('parses xyz lines and skips junk', () => {
@@ -35,55 +35,76 @@ describe('subsample', () => {
   });
 });
 
-describe('alignment math', () => {
-  // synthetic EinScan-style picks in mm: floor on z=0, hubs 254mm up,
-  // 787.4mm out each side (62" track), front of car toward +x
-  const picks = () => ({
-    ground: [new Vector3(0, 0, 0), new Vector3(1000, 0, 0), new Vector3(0, 1000, 0)],
-    hubL: new Vector3(500, -787.4, 254),
-    hubR: new Vector3(500, 787.4, 254),
-    front: new Vector3(2500, 0, 300),
+describe('chassis-point alignment (drooped, wheels-off scan)', () => {
+  // synthetic EinScan-style picks in mm. Car floats 500mm up on stands;
+  // pivots match the app default geometry (x ±8", out 5", equal heights);
+  // hub is at full droop (BELOW the pivot plane) and 2" forward of the
+  // pivot-span midpoint to exercise the x-origin shift.
+  const IN = 25.4;
+  const picks = (): ChassisPicks => ({
+    lf: new Vector3(8 * IN, -5 * IN, 500),
+    lr: new Vector3(-8 * IN, -5 * IN, 500),
+    rf: new Vector3(8 * IN, 5 * IN, 500),
+    rr: new Vector3(-8 * IN, 5 * IN, 500),
+    hub: new Vector3(2 * IN, 31 * IN, 500 - 6 * IN),
   });
 
-  it('maps hubs to ±31" out, 10" up, origin at axle center on the ground', () => {
+  it('maps pivots to the entered ride height with the hub at x=0', () => {
     const scan = new ScanManager();
-    const res = scan.applyAlignment(picks(), { unitToInches: UNIT_TO_INCHES.mm });
-    expect(res.hubDistIn).toBeCloseTo(62, 1);
-    const hubL = picks().hubL.applyMatrix4(scan.group.matrix);
-    expect(hubL.x).toBeCloseTo(0, 3);
-    expect(hubL.y).toBeCloseTo(-31, 2);
-    expect(hubL.z).toBeCloseTo(10, 2);
+    const res = scan.applyChassisAlignment(picks(), {
+      unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
+    });
+    expect(res.frontSpanIn).toBeCloseTo(10, 3);           // LF<->RF = 2 x 5"
+    expect(res.pivots.lf).toEqual([6, -5, 4.2]);          // x: 8 - 2 (hub shift)
+    expect(res.pivots.rr).toEqual([-10, 5, 4.2]);
+    const hub = picks().hub.applyMatrix4(scan.group.matrix);
+    expect(hub.x).toBeCloseTo(0, 3);                      // axle station
+    expect(hub.y).toBeCloseTo(31, 3);
+    expect(hub.z).toBeCloseTo(4.2 - 6, 3);                // droop preserved
   });
 
-  it('undoes an arbitrary rigid transform of the scan', () => {
+  it('undoes an arbitrary rigid transform of the scan (car on jack stands)', () => {
     const T = new Matrix4().makeRotationAxis(new Vector3(1, 2, 3).normalize(), 0.7)
       .setPosition(400, -900, 1234);
     const p = picks();
-    const moved = {
-      ground: p.ground.map((g) => g.applyMatrix4(T)),
-      hubL: p.hubL.applyMatrix4(T), hubR: p.hubR.applyMatrix4(T),
-      front: p.front.applyMatrix4(T),
+    const moved: ChassisPicks = {
+      lf: p.lf.applyMatrix4(T), lr: p.lr.applyMatrix4(T),
+      rf: p.rf.applyMatrix4(T), rr: p.rr.applyMatrix4(T),
+      hub: p.hub.applyMatrix4(T),
     };
     const scan = new ScanManager();
-    scan.applyAlignment(moved, { unitToInches: UNIT_TO_INCHES.mm });
-    const hubR = picks().hubR.applyMatrix4(T).applyMatrix4(scan.group.matrix);
-    expect(hubR.x).toBeCloseTo(0, 2);
-    expect(hubR.y).toBeCloseTo(31, 2);
-    expect(hubR.z).toBeCloseTo(10, 2);
+    const res = scan.applyChassisAlignment(moved, {
+      unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
+    });
+    expect(res.pivots.lf[0]).toBeCloseTo(6, 2);
+    expect(res.pivots.lf[1]).toBeCloseTo(-5, 2);
+    expect(res.pivots.lf[2]).toBeCloseTo(4.2, 2);
   });
 
-  it('a known hub-to-hub distance overrides the unit preset', () => {
+  it('a known LF<->RF pivot distance overrides the unit preset', () => {
     const scan = new ScanManager();
-    const res = scan.applyAlignment(picks(), { actualHubDistIn: 61.5 });
-    expect(res.hubDistIn).toBeCloseTo(61.5, 6);
+    const res = scan.applyChassisAlignment(picks(), {
+      actualFrontSpanIn: 10.5, pivotHeightIn: 4.2,
+    });
+    expect(res.frontSpanIn).toBeCloseTo(10.5, 6);
   });
 
-  it('front pick fixes forward even if the hubs were picked swapped', () => {
+  it('labeled picks make up/forward deterministic — no floor needed', () => {
+    // rotate the whole scan upside-down-ish; labels still resolve the frame
+    const T = new Matrix4().makeRotationAxis(new Vector3(1, 0, 0), Math.PI * 0.9);
     const p = picks();
-    const swapped = { ...p, hubL: p.hubR, hubR: p.hubL };
+    const moved: ChassisPicks = {
+      lf: p.lf.applyMatrix4(T), lr: p.lr.applyMatrix4(T),
+      rf: p.rf.applyMatrix4(T), rr: p.rr.applyMatrix4(T),
+      hub: p.hub.applyMatrix4(T),
+    };
     const scan = new ScanManager();
-    scan.applyAlignment(swapped, { unitToInches: UNIT_TO_INCHES.mm });
-    const front = picks().front.applyMatrix4(scan.group.matrix);
-    expect(front.x).toBeGreaterThan(0);   // forward stays forward
+    const res = scan.applyChassisAlignment(moved, {
+      unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
+    });
+    expect(res.pivots.lf[0]).toBeGreaterThan(0);          // front pivot forward
+    expect(res.pivots.lf[1]).toBeCloseTo(-5, 2);          // left is left
+    const hub = picks().hub.applyMatrix4(T).applyMatrix4(scan.group.matrix);
+    expect(hub.z).toBeLessThan(4.2);                      // droop still below pivots
   });
 });

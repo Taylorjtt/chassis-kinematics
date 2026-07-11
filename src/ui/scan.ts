@@ -27,12 +27,24 @@ export const UNIT_TO_INCHES: Record<ScanUnits, number> = {
   mm: 1 / 25.4, cm: 1 / 2.54, m: 39.3701, in: 1,
 };
 
-export interface AlignPicks {
-  ground: THREE.Vector3[];   // 3 points on the floor (world coords)
-  hubL: THREE.Vector3;
-  hubR: THREE.Vector3;
-  front: THREE.Vector3;
+/**
+ * Chassis-point alignment (world coords). Designed for a car scanned on
+ * stands at full droop with the wheels off: every reference is bolted to
+ * the frame, so suspension position is irrelevant.
+ */
+export interface ChassisPicks {
+  lf: THREE.Vector3;   // LEFT lower arm front pivot
+  lr: THREE.Vector3;   // LEFT lower arm rear pivot
+  rf: THREE.Vector3;   // RIGHT lower arm front pivot
+  rr: THREE.Vector3;   // RIGHT lower arm rear pivot
+  hub: THREE.Vector3;  // either hub/spindle center — fore/aft station only
 }
+
+export interface ChassisAlignResult {
+  frontSpanIn: number;                       // LF<->RF pivot distance, inches
+  pivots: { lf: T3; lr: T3; rf: T3; rr: T3 } // car-frame coords, auto-fill
+}
+type T3 = [number, number, number];
 
 interface StoredAlign { sig: string; matrix: number[] }
 const ALIGN_KEY = 'clrScanAlign';
@@ -200,45 +212,57 @@ export class ScanManager {
     });
   }
 
-  /** Distance between the two picked hubs, in current world units. */
-  hubDistance(p: AlignPicks): number { return p.hubL.distanceTo(p.hubR); }
-
   /**
-   * Align from world-space picks. Ground plane -> z up; hubs -> axle line and
-   * origin (midpoint on the ground); front pick disambiguates forward.
-   * Scale: either the scan's native unit (compensated for the provisional
-   * fit scale already applied) or a known hub-to-hub distance in inches.
-   * Returns the resulting hub-to-hub distance in inches as a sanity check.
+   * Align from the four lower-arm chassis pivots + one hub center.
+   * - Level: the plane through the four pivots is level at ride (pivots sit
+   *   at equal heights on the frame).
+   * - Centerline (y=0): midway between the left and right pivot pairs.
+   * - Forward (+x): from the rear-pivot midpoint toward the front-pivot
+   *   midpoint (picks are labeled, so no extra disambiguation pick).
+   * - Fore/aft origin (x=0): the picked hub center's station. Droop barely
+   *   moves a hub fore/aft (the arm swings about an ~fore/aft axis), so this
+   *   is safe on a drooped scan.
+   * - Ground (z=0): `pivotHeightIn` = how high the lower pivots sit above
+   *   the ground at ride — "the bottom", one tape measurement.
+   * Scale: scan unit preset, or a known LF<->RF pivot distance in inches.
    */
-  applyAlignment(
-    p: AlignPicks, opts: { unitToInches?: number; actualHubDistIn?: number },
-  ): { hubDistIn: number } {
+  applyChassisAlignment(
+    p: ChassisPicks,
+    opts: { unitToInches?: number; actualFrontSpanIn?: number; pivotHeightIn: number },
+  ): ChassisAlignResult {
     this.group.updateMatrixWorld(true);
     const ws = new THREE.Vector3();
     this.group.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), ws);
     const worldScale = (ws.x + ws.y + ws.z) / 3;   // scan units -> current world
-    const hubDistWorld = this.hubDistance(p);
-    const scaleToInches = opts.actualHubDistIn
-      ? opts.actualHubDistIn / hubDistWorld
+    const frontSpanWorld = p.lf.distanceTo(p.rf);
+    const f = opts.actualFrontSpanIn
+      ? opts.actualFrontSpanIn / frontSpanWorld
       : (opts.unitToInches ?? 1) / worldScale;
-    const [g1, g2, g3] = p.ground;
-    let n = g2.clone().sub(g1).cross(g3.clone().sub(g1)).normalize();
-    const hubMid = p.hubL.clone().add(p.hubR).multiplyScalar(0.5);
-    if (n.dot(hubMid.clone().sub(g1)) < 0) n.multiplyScalar(-1);   // up = toward the car
-    const z = n;
-    // origin: hub midpoint dropped onto the ground plane
-    const O = hubMid.clone().sub(z.clone().multiplyScalar(z.dot(hubMid.clone().sub(g1))));
-    const axle = p.hubR.clone().sub(p.hubL);
-    const yProj = axle.clone().sub(z.clone().multiplyScalar(z.dot(axle))).normalize();
-    let x = yProj.clone().cross(z).normalize();
-    if (x.dot(p.front.clone().sub(O)) < 0) x.multiplyScalar(-1);   // trust the front pick
-    const y = z.clone().cross(x).normalize();                       // right, re-derived
 
-    // A maps current world -> car frame: rotate (rows x,y,z), then scale
+    const leftMid = p.lf.clone().add(p.lr).multiplyScalar(0.5);
+    const rightMid = p.rf.clone().add(p.rr).multiplyScalar(0.5);
+    const frontMid = p.lf.clone().add(p.rf).multiplyScalar(0.5);
+    const rearMid = p.lr.clone().add(p.rr).multiplyScalar(0.5);
+    const mid = leftMid.clone().add(rightMid).multiplyScalar(0.5);
+    const a = rightMid.clone().sub(leftMid);           // ~right
+    const b = frontMid.clone().sub(rearMid);           // ~forward
+    const z = b.clone().cross(a).normalize();          // fwd × right = up
+    const x = b.clone().sub(z.clone().multiplyScalar(z.dot(b))).normalize();
+    const y = z.clone().cross(x).normalize();
+
     const R = new THREE.Matrix4().makeBasis(x, y, z).transpose();
-    const A = new THREE.Matrix4().makeScale(scaleToInches, scaleToInches, scaleToInches)
+    const T0 = new THREE.Matrix4().makeScale(f, f, f)
       .multiply(R)
-      .multiply(new THREE.Matrix4().makeTranslation(-O.x, -O.y, -O.z));
+      .multiply(new THREE.Matrix4().makeTranslation(-mid.x, -mid.y, -mid.z));
+    // shift so the hub sets x=0 and the pivot plane sits at the ride height
+    const hub0 = p.hub.clone().applyMatrix4(T0);
+    const pivZ = [p.lf, p.lr, p.rf, p.rr]
+      .map((q) => q.clone().applyMatrix4(T0).z)
+      .reduce((s2, v) => s2 + v, 0) / 4;
+    const A = new THREE.Matrix4()
+      .makeTranslation(-hub0.x, 0, opts.pivotHeightIn - pivZ)
+      .multiply(T0);
+
     this.group.matrix.premultiply(A);
     this.group.updateMatrixWorld(true);
     this.aligned = true;
@@ -247,7 +271,15 @@ export class ScanManager {
       const rec: StoredAlign = { sig: this.fileSig, matrix: this.group.matrix.toArray() };
       try { localStorage.setItem(ALIGN_KEY, JSON.stringify(rec)); } catch { /* storage full — realign next time */ }
     }
-    return { hubDistIn: hubDistWorld * scaleToInches };
+    const out = (q: THREE.Vector3): T3 => {
+      const w = q.clone().applyMatrix4(A);
+      const r3 = (v: number) => Math.round(v * 1000) / 1000;
+      return [r3(w.x), r3(w.y), r3(w.z)];
+    };
+    return {
+      frontSpanIn: frontSpanWorld * f,
+      pivots: { lf: out(p.lf), lr: out(p.lr), rf: out(p.rf), rr: out(p.rr) },
+    };
   }
 
   private loadStoredAlign(): StoredAlign | null {

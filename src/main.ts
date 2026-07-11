@@ -16,7 +16,7 @@ import { Scene3D } from './ui/scene3d';
 import { chartMulti, seriesRange } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
 import { buildPartsForm, setFrontPoint } from './ui/panels';
-import { AlignPicks, ScanManager, ScanUnits, UNIT_TO_INCHES } from './ui/scan';
+import { ChassisPicks, ScanManager, ScanUnits, UNIT_TO_INCHES } from './ui/scan';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const fmt = (n: number, d: number) => (n >= 0 ? '+' : '') + n.toFixed(d);
@@ -438,16 +438,17 @@ function alignWizard(): void {
   if (!scan.loaded) return;
   alignPicks = [];
   scan.clearMarkers();
+  // all five references are chassis-fixed — a drooped, wheels-off scan on
+  // stands aligns exactly the same as one at ride height
   const labels = [
-    'FLOOR point 1 of 3 (spread them out)',
-    'FLOOR point 2 of 3',
-    'FLOOR point 3 of 3',
-    'LEFT hub / spindle center',
-    'RIGHT hub / spindle center',
-    'any point near the FRONT of the car',
+    'LEFT lower arm — FRONT chassis pivot',
+    'LEFT lower arm — REAR chassis pivot',
+    'RIGHT lower arm — FRONT chassis pivot',
+    'RIGHT lower arm — REAR chassis pivot',
+    'either hub / spindle snout center (sets the axle station)',
   ];
   const next = (): void => {
-    if (alignPicks.length < 6) {
+    if (alignPicks.length < 5) {
       startPick(labels[alignPicks.length], (p) => {
         alignPicks.push(p);
         scan.addMarker(p);
@@ -455,24 +456,33 @@ function alignWizard(): void {
         next();
       });
     } else {
-      const picks: AlignPicks = {
-        ground: alignPicks.slice(0, 3),
-        hubL: alignPicks[3], hubR: alignPicks[4], front: alignPicks[5],
+      const picks: ChassisPicks = {
+        lf: alignPicks[0], lr: alignPicks[1],
+        rf: alignPicks[2], rr: alignPicks[3],
+        hub: alignPicks[4],
       };
       const actual = parseFloat(($('scanScaleActual') as HTMLInputElement).value);
       const units = ($('scanUnits') as HTMLSelectElement).value as ScanUnits;
-      const res = scan.applyAlignment(
-        picks,
-        isFinite(actual) && actual > 0
-          ? { actualHubDistIn: actual }
-          : { unitToInches: UNIT_TO_INCHES[units] },
-      );
+      const hIn = parseFloat(($('scanPivotH') as HTMLInputElement).value);
+      const pivotHeightIn = isFinite(hIn) ? hIn : front.chassis.sides.R.lowerFront[2];
+      const res = scan.applyChassisAlignment(picks, {
+        pivotHeightIn,
+        ...(isFinite(actual) && actual > 0
+          ? { actualFrontSpanIn: actual }
+          : { unitToInches: UNIT_TO_INCHES[units] }),
+      });
       alignPicks = [];
+      // the four picked pivots ARE measurements — fill them in
+      setFrontPoint(front, 'chassis.sides.L.lowerFront', res.pivots.lf);
+      setFrontPoint(front, 'chassis.sides.L.lowerRear', res.pivots.lr);
+      setFrontPoint(front, 'chassis.sides.R.lowerFront', res.pivots.rf);
+      setFrontPoint(front, 'chassis.sides.R.lowerRear', res.pivots.rr);
       $('scanStatus').style.color = 'var(--good)';
       $('scanStatus').textContent =
-        `aligned ✓ — hub-to-hub ${res.hubDistIn.toFixed(2)}" · ${scan.info}`;
+        `aligned ✓ — LF↔RF pivot span ${res.frontSpanIn.toFixed(2)}" · lower pivots filled in · ${scan.info}`;
       scene.resetView();
-      update();
+      rebuildForm();
+      rebuild();
     }
   };
   next();
@@ -493,6 +503,8 @@ $('scanFile').addEventListener('change', async (e) => {
     await scan.load(f);
     ($('scanAlign') as HTMLButtonElement).disabled = false;
     $('scanScaleRow').style.display = 'flex';
+    const hEl = $('scanPivotH') as HTMLInputElement;
+    if (!hEl.value) hEl.value = String(front.chassis.sides.R.lowerFront[2]);
     $('scanStatus').style.color = scan.aligned ? 'var(--good)' : 'var(--dim)';
     $('scanStatus').textContent = scan.info
       + (scan.aligned ? ' — stored alignment applied ✓' : ' — now Align scan');
