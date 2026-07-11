@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { BufferAttribute, BufferGeometry, Matrix4, Vector3 } from 'three';
+import { Points } from 'three';
 import { ChassisPicks, ScanManager, parseASC, subsample, UNIT_TO_INCHES } from '../src/ui/scan';
 
 describe('parseASC', () => {
@@ -87,6 +88,35 @@ describe('chassis-point alignment (drooped, wheels-off scan)', () => {
       actualFrontSpanIn: 10.5, pivotHeightIn: 4.2,
     });
     expect(res.frontSpanIn).toBeCloseTo(10.5, 6);
+  });
+
+  it('detects mirrored L/R picks (car would be upside down) and auto-corrects', () => {
+    const scan = new ScanManager();
+    // give the scan some "car mass" well above the pivots in scan coords
+    scan.group.add(new Points(parseASC('0 0 1200\n100 100 1300\n-100 -100 1400\n')));
+    const p = picks();
+    const mirrored: ChassisPicks = { lf: p.rf, lr: p.rr, rf: p.lf, rr: p.lr, hub: p.hub };
+    const res = scan.applyChassisAlignment(mirrored, {
+      unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
+    });
+    expect(res.swappedLR).toBe(true);
+    // output keyed by CAR side — identical to the correctly-labeled case
+    expect(res.pivots.lf[0]).toBeCloseTo(6, 2);
+    expect(res.pivots.lf[1]).toBeCloseTo(-5, 2);
+    expect(res.pivots.rf[1]).toBeCloseTo(5, 2);
+    // and the car mass ends up above the ground, not below it
+    const c = scan.contentCenterWorld()!;
+    expect(c.z).toBeGreaterThan(4.2);
+  });
+
+  it('does not second-guess correctly labeled picks', () => {
+    const scan = new ScanManager();
+    scan.group.add(new Points(parseASC('0 0 1200\n100 100 1300\n-100 -100 1400\n')));
+    const res = scan.applyChassisAlignment(picks(), {
+      unitToInches: UNIT_TO_INCHES.mm, pivotHeightIn: 4.2,
+    });
+    expect(res.swappedLR).toBe(false);
+    expect(res.pivots.lf[1]).toBeCloseTo(-5, 2);
   });
 
   it('labeled picks make up/forward deterministic — no floor needed', () => {

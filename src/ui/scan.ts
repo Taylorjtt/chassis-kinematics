@@ -43,6 +43,7 @@ export interface ChassisPicks {
 export interface ChassisAlignResult {
   frontSpanIn: number;                       // LF<->RF pivot distance, inches
   pivots: { lf: T3; lr: T3; rf: T3; rr: T3 } // car-frame coords, auto-fill
+  swappedLR: boolean;                        // picks were mirrored; auto-corrected
 }
 type T3 = [number, number, number];
 
@@ -239,29 +240,20 @@ export class ScanManager {
       ? opts.actualFrontSpanIn / frontSpanWorld
       : (opts.unitToInches ?? 1) / worldScale;
 
-    const leftMid = p.lf.clone().add(p.lr).multiplyScalar(0.5);
-    const rightMid = p.rf.clone().add(p.rr).multiplyScalar(0.5);
-    const frontMid = p.lf.clone().add(p.rf).multiplyScalar(0.5);
-    const rearMid = p.lr.clone().add(p.rr).multiplyScalar(0.5);
-    const mid = leftMid.clone().add(rightMid).multiplyScalar(0.5);
-    const a = rightMid.clone().sub(leftMid);           // ~right
-    const b = frontMid.clone().sub(rearMid);           // ~forward
-    const z = b.clone().cross(a).normalize();          // fwd × right = up
-    const x = b.clone().sub(z.clone().multiplyScalar(z.dot(b))).normalize();
-    const y = z.clone().cross(x).normalize();
+    let picks = p;
+    let A = alignMatrixFrom(picks, f, opts.pivotHeightIn);
 
-    const R = new THREE.Matrix4().makeBasis(x, y, z).transpose();
-    const T0 = new THREE.Matrix4().makeScale(f, f, f)
-      .multiply(R)
-      .multiply(new THREE.Matrix4().makeTranslation(-mid.x, -mid.y, -mid.z));
-    // shift so the hub sets x=0 and the pivot plane sits at the ride height
-    const hub0 = p.hub.clone().applyMatrix4(T0);
-    const pivZ = [p.lf, p.lr, p.rf, p.rr]
-      .map((q) => q.clone().applyMatrix4(T0).z)
-      .reduce((s2, v) => s2 + v, 0) / 4;
-    const A = new THREE.Matrix4()
-      .makeTranslation(-hub0.x, 0, opts.pivotHeightIn - pivZ)
-      .multiply(T0);
+    // Upside-down guard: looking at the FRONT of a car, its left is on YOUR
+    // right, so mirrored L/R picks are common — and they flip the frame.
+    // The bulk of the scanned car must sit ABOVE the lower-pivot plane; if
+    // it lands below, the picks were mirrored: swap sides and redo.
+    let swappedLR = false;
+    const center = this.contentCenterWorld();
+    if (center && center.clone().applyMatrix4(A).z < opts.pivotHeightIn) {
+      picks = { lf: p.rf, lr: p.rr, rf: p.lf, rr: p.lr, hub: p.hub };
+      A = alignMatrixFrom(picks, f, opts.pivotHeightIn);
+      swappedLR = true;
+    }
 
     this.group.matrix.premultiply(A);
     this.group.updateMatrixWorld(true);
@@ -278,8 +270,20 @@ export class ScanManager {
     };
     return {
       frontSpanIn: frontSpanWorld * f,
-      pivots: { lf: out(p.lf), lr: out(p.lr), rf: out(p.rf), rr: out(p.rr) },
+      // keyed by CAR side — after a swap, the user's "LF" pick is really RF
+      pivots: { lf: out(picks.lf), lr: out(picks.lr), rf: out(picks.rf), rr: out(picks.rr) },
+      swappedLR,
     };
+  }
+
+  /** Bounding-box center of the scan content (world coords); null if empty. */
+  contentCenterWorld(): THREE.Vector3 | null {
+    const targets = this.group.children.filter((c) => c !== this.markers);
+    if (!targets.length) return null;
+    this.group.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    targets.forEach((t) => box.expandByObject(t));
+    return box.isEmpty() ? null : box.getCenter(new THREE.Vector3());
   }
 
   private loadStoredAlign(): StoredAlign | null {
@@ -288,6 +292,33 @@ export class ScanManager {
       return rec && rec.sig === this.fileSig ? rec : null;
     } catch { return null; }
   }
+}
+
+/** Ground plane / centerline / forward / scale from the labeled pivot picks. */
+function alignMatrixFrom(p: ChassisPicks, f: number, pivotHeightIn: number): THREE.Matrix4 {
+  const leftMid = p.lf.clone().add(p.lr).multiplyScalar(0.5);
+  const rightMid = p.rf.clone().add(p.rr).multiplyScalar(0.5);
+  const frontMid = p.lf.clone().add(p.rf).multiplyScalar(0.5);
+  const rearMid = p.lr.clone().add(p.rr).multiplyScalar(0.5);
+  const mid = leftMid.clone().add(rightMid).multiplyScalar(0.5);
+  const a = rightMid.clone().sub(leftMid);           // ~right
+  const b = frontMid.clone().sub(rearMid);           // ~forward
+  const z = b.clone().cross(a).normalize();          // fwd × right = up
+  const x = b.clone().sub(z.clone().multiplyScalar(z.dot(b))).normalize();
+  const y = z.clone().cross(x).normalize();
+
+  const R = new THREE.Matrix4().makeBasis(x, y, z).transpose();
+  const T0 = new THREE.Matrix4().makeScale(f, f, f)
+    .multiply(R)
+    .multiply(new THREE.Matrix4().makeTranslation(-mid.x, -mid.y, -mid.z));
+  // shift so the hub sets x=0 and the pivot plane sits at the ride height
+  const hub0 = p.hub.clone().applyMatrix4(T0);
+  const pivZ = [p.lf, p.lr, p.rf, p.rr]
+    .map((q) => q.clone().applyMatrix4(T0).z)
+    .reduce((s2, v) => s2 + v, 0) / 4;
+  return new THREE.Matrix4()
+    .makeTranslation(-hub0.x, 0, pivotHeightIn - pivZ)
+    .multiply(T0);
 }
 
 export function subsample(geo: THREE.BufferGeometry, max: number): THREE.BufferGeometry {

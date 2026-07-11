@@ -556,7 +556,9 @@ function alignWizard(): void {
       setFrontPoint(front, 'chassis.sides.R.lowerRear', res.pivots.rr);
       $('scanStatus').style.color = 'var(--good)';
       $('scanStatus').textContent =
-        `aligned ✓ — LF↔RF pivot span ${res.frontSpanIn.toFixed(2)}" · lower pivots filled in · ${scan.info}`;
+        `aligned ✓ — LF↔RF pivot span ${res.frontSpanIn.toFixed(2)}" · lower pivots filled in`
+        + (res.swappedLR ? ' · your L/R picks were mirrored — auto-corrected' : '')
+        + ` · ${scan.info}`;
       scene.resetView();
       rebuildForm();
       rebuild();
@@ -788,6 +790,11 @@ function measureWizard(): void {
       setFrontPoint(front, 'chassis.sides.L.lowerRear', res.pivots.lr);
       setFrontPoint(front, 'chassis.sides.R.lowerFront', res.pivots.rf);
       setFrontPoint(front, 'chassis.sides.R.lowerRear', res.pivots.rr);
+      if (res.swappedLR) {
+        // the rest of the wizard says LEFT/RIGHT — warn that we corrected
+        $('scanStatus').style.color = 'var(--good)';
+        $('scanStatus').textContent = 'heads up: your L/R picks were mirrored — auto-corrected. LEFT = driver side.';
+      }
       scene.resetView();
     },
   }));
