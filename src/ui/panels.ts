@@ -21,11 +21,38 @@ function setPath(obj: unknown, path: string, value: unknown): void {
 
 interface Ctx { front: FrontEnd; setup: Setup }
 
-function numField(ctx: Ctx, label: string, root: 'front' | 'setup', path: string, step = 0.05): string {
+/** What a ⌖ button asks the app to measure off the scan.
+ *  point = fill an xyz point · two = distance between two clicks ·
+ *  ubj/tro/lbj/shockseat = one-click recipes using known chassis points. */
+export interface PickRequest {
+  kind: 'point' | 'two' | 'ubj' | 'tro' | 'lbj' | 'shockseat';
+  path: string;
+  side: Side | null;
+  label: string;
+}
+
+function numField(
+  ctx: Ctx, label: string, root: 'front' | 'setup', path: string, step = 0.05,
+  pick?: PickRequest['kind'], side?: Side,
+): string {
   const v = getPath(root === 'front' ? ctx.front : ctx.setup, path);
   const val = typeof v === 'number' ? String(+(v as number).toFixed(4)) : '';
-  return `<div class="nf"><label>${esc(label)}</label>`
+  const btn = pick
+    ? `<button class="pickbtn" data-picknum="${pick}" data-path="${path}" data-side="${side ?? ''}" data-picklabel="${esc(label)}">⌖</button>`
+    : '';
+  return `<div class="nf"><label>${esc(label)}${btn}</label>`
     + `<input type="number" step="${step}" value="${val}" data-root="${root}" data-path="${path}"></div>`;
+}
+
+/** Write a scan-measured scalar into a front-rooted path (creates the pin
+ *  card on demand — its fields may be untouched/null). */
+export function setFrontValue(front: FrontEnd, path: string, v: number): void {
+  const m = path.match(/^corners\.(R|L)\.spindle\.pin\./);
+  if (m) {
+    const spindle = front.corners[m[1] as Side].spindle;
+    if (!spindle.pin) spindle.pin = { heightAboveLBJ: 0, inclinationDeg: 0, sweepDeg: 0, snoutLength: 0 };
+  }
+  setPath(front, path, v);
 }
 
 function pointField(ctx: Ctx, label: string, path: string, side: Side | null): string {
@@ -36,7 +63,7 @@ function pointField(ctx: Ctx, label: string, path: string, side: Side | null): s
     `<div class="f"><i>${lab}</i><input type="number" step="0.1" value="${+value.toFixed(4)}" `
     + `data-root="front" data-path="${path}" data-ax="${ax}" data-side="${side ?? ''}"></div>`;
   return `<div class="ptrow"><div class="pl">${esc(label)}`
-    + `<button class="pickbtn" data-pickpt="${path}" data-picklabel="${esc(label)}" title="pick this point on the 3D scan">⌖ pick</button>`
+    + `<button class="pickbtn" data-pickpt="${path}" data-pickside="${side ?? ''}" data-picklabel="${esc(label)}" title="pick this point on the 3D scan">⌖ pick</button>`
     + '</div><div class="xyz">'
     + f(0, 'x', arr[0]) + f(1, ylab, yDisp) + f(2, 'z', arr[2]) + '</div></div>';
 }
@@ -52,7 +79,7 @@ const card = (title: string, cls: string, body: string) =>
 
 export function buildPartsForm(
   host: HTMLElement, ctx: Ctx, onChange: () => void,
-  onPick?: (path: string, label: string) => void,
+  onPick?: (req: PickRequest) => void,
 ): void {
   let h = '';
   h += card('Vehicle & steering linkage', 'wide', '<div class="numrow">'
@@ -80,13 +107,15 @@ export function buildPartsForm(
       + '</div>');
 
     h += card(`${S} — control arms`, `wide ${side}`,
-      '<div class="cardhelp">Lower: stock GM stamped arm. Upper: heim-adjustable A-frame.</div>'
+      '<div class="cardhelp">Lower: stock GM stamped arm. Upper: heim-adjustable A-frame. '
+      + '⌖ on lower length = click the LBJ (fills length + axial); '
+      + '⌖ on upper leg = click the UBJ (fills both legs).</div>'
       + '<div class="cg2"><div class="numrow">'
-      + numField(ctx, 'Lower length (pivot→BJ)', 'front', `${c}.lowerArm.length`)
+      + numField(ctx, 'Lower length (pivot→BJ)', 'front', `${c}.lowerArm.length`, 0.05, 'lbj', side)
       + numField(ctx, 'BJ along axis', 'front', `${c}.lowerArm.bjAxial`)
       + numField(ctx, 'BJ drop', 'front', `${c}.lowerArm.bjDrop`)
       + '</div><div class="numrow">'
-      + numField(ctx, 'Upper front leg base', 'front', `${c}.upperArm.legFront.baseLength`, 0.01)
+      + numField(ctx, 'Upper front leg base', 'front', `${c}.upperArm.legFront.baseLength`, 0.01, 'ubj', side)
       + numField(ctx, 'Upper rear leg base', 'front', `${c}.upperArm.legRear.baseLength`, 0.01)
       + '</div><div class="numrow">'
       + numField(ctx, 'Front heim TPI', 'front', `${c}.upperArm.legFront.heimPitchTPI`, 1)
@@ -99,7 +128,7 @@ export function buildPartsForm(
       + ' set the motion ratio (dShock/dWheel in the HUD). Spring omitted for now.</div>'
       + pointField(ctx, 'Chassis mount (frame)', `chassis.sides.${side}.shockMountUpper`, side)
       + '<div class="numrow">'
-      + numField(ctx, 'Seat on arm — axial', 'front', `${c}.lowerArm.shockSeat.axial`)
+      + numField(ctx, 'Seat on arm — axial', 'front', `${c}.lowerArm.shockSeat.axial`, 0.05, 'shockseat', side)
       + numField(ctx, 'Seat radial', 'front', `${c}.lowerArm.shockSeat.radial`)
       + numField(ctx, 'Seat drop', 'front', `${c}.lowerArm.shockSeat.drop`)
       + '</div>');
@@ -110,9 +139,9 @@ export function buildPartsForm(
     h += card(`${S} — spindle (GM long, 3-piece)`, `wide ${side}`,
       calBadge
       + '<div class="cg2"><div class="numrow">'
-      + numField(ctx, 'Height LBJ→UBJ', 'front', `${c}.spindle.height`, 0.01)
-      + numField(ctx, 'Pin boss above LBJ', 'front', `${c}.spindle.pin.heightAboveLBJ`, 0.05)
-      + numField(ctx, 'Pin snout length', 'front', `${c}.spindle.pin.snoutLength`, 0.05)
+      + numField(ctx, 'Height LBJ→UBJ', 'front', `${c}.spindle.height`, 0.01, 'two', side)
+      + numField(ctx, 'Pin boss above LBJ', 'front', `${c}.spindle.pin.heightAboveLBJ`, 0.05, 'two', side)
+      + numField(ctx, 'Pin snout length', 'front', `${c}.spindle.pin.snoutLength`, 0.05, 'two', side)
       + '</div><div class="numrow">'
       + numField(ctx, 'Pin inclination °', 'front', `${c}.spindle.pin.inclinationDeg`, 0.1)
       + numField(ctx, 'Pin sweep °', 'front', `${c}.spindle.pin.sweepDeg`, 0.1)
@@ -127,7 +156,7 @@ export function buildPartsForm(
 
     h += card(`${S} — tie rod & wheel`, side,
       '<div class="numrow">'
-      + numField(ctx, 'Tie rod base len', 'front', `${c}.tieRod.baseLength`, 0.01)
+      + numField(ctx, 'Tie rod base len', 'front', `${c}.tieRod.baseLength`, 0.01, 'tro', side)
       + numField(ctx, 'Sleeve TPI', 'front', `${c}.tieRod.sleevePitchTPI`, 1)
       + numField(ctx, 'Sleeve ends (1/2)', 'front', `${c}.tieRod.endsThreaded`, 1)
       + numField(ctx, 'Ride target WC z', 'setup', `corners.${side}.rideTargetWCz`, 0.05)
@@ -166,7 +195,22 @@ export function buildPartsForm(
   });
   host.querySelectorAll<HTMLButtonElement>('button[data-pickpt]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      onPick?.(btn.dataset.pickpt!, btn.dataset.picklabel ?? 'point');
+      onPick?.({
+        kind: 'point',
+        path: btn.dataset.pickpt!,
+        side: (btn.dataset.pickside as Side) || null,
+        label: btn.dataset.picklabel ?? 'point',
+      });
+    });
+  });
+  host.querySelectorAll<HTMLButtonElement>('button[data-picknum]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      onPick?.({
+        kind: btn.dataset.picknum as PickRequest['kind'],
+        path: btn.dataset.path!,
+        side: (btn.dataset.side as Side) || null,
+        label: btn.dataset.picklabel ?? 'length',
+      });
     });
   });
   host.querySelectorAll<HTMLButtonElement>('button[data-clearcal]').forEach((btn) => {

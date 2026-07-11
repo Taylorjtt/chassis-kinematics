@@ -3,8 +3,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  V4_DEFAULT, defaultState, importV4, loadStateJSON, mirrorV4Corner, serializeState,
+  V4_DEFAULT, armPickLengths, defaultState, importV4, loadStateJSON, mirrorV4Corner, serializeState,
 } from '../src/state/setup';
+import { Va, rotAboutAxis } from '../src/core/math';
 import { assembleFront } from '../src/core/trim';
 import { calibrateSpindle } from '../src/core/calibrate';
 import { toeInches } from '../src/core/metrics';
@@ -127,6 +128,28 @@ describe('spindle calibration fallback (§5)', () => {
     const fa = assembleFront(front, setup);
     expect(fa.statL.static!.camber).toBeCloseTo(-3.0, 2);
     expect(fa.statL.static!.camber).toBeLessThan(0);
+  });
+});
+
+describe('armPickLengths (scan pick on the arm, any droop)', () => {
+  it('recovers the part spec from a fully drooped LBJ pick', () => {
+    const { front } = defaultState();
+    const cs = front.chassis.sides.R;
+    const la = front.corners.R.lowerArm;   // imported: axial 7, radial 19.5, drop 0.4
+    // reconstruct the ride-height LBJ, then droop the arm 28° about its pivot axis
+    const pf = Va(cs.lowerFront), pr = Va(cs.lowerRear);
+    const u = pr.clone().sub(pf).normalize();
+    const atRide = Va([1.0, 24.5, 3.8]);
+    const drooped = rotAboutAxis(atRide, pf, u, 28 * Math.PI / 180);
+    const got = armPickLengths(cs, drooped.toArray(), la.bjDrop);
+    expect(got.axial).toBeCloseTo(la.bjAxial, 3);
+    expect(got.radial).toBeCloseTo(la.length, 3);
+  });
+  it('is exact at ride height too', () => {
+    const { front } = defaultState();
+    const got = armPickLengths(front.chassis.sides.R, [1.0, 24.5, 3.8], 0.4);
+    expect(got.axial).toBeCloseTo(7, 3);
+    expect(got.radial).toBeCloseTo(19.5, 3);
   });
 });
 

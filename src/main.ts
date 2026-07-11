@@ -15,7 +15,8 @@ import { defaultState, loadStateJSON, serializeState } from './state/setup';
 import { Scene3D } from './ui/scene3d';
 import { chartMulti, seriesRange } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
-import { buildPartsForm, setFrontPoint } from './ui/panels';
+import { PickRequest, buildPartsForm, setFrontPoint, setFrontValue } from './ui/panels';
+import { armPickLengths } from './state/setup';
 import { ChassisPicks, ScanManager, ScanUnits, UNIT_TO_INCHES } from './ui/scan';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -29,11 +30,15 @@ let mode: TravelMode = 'wheel';
 
 const scene = new Scene3D($('scene'));
 
+const AUTOSAVE_KEY = 'clrAutosave';
+
 function rebuild(): void {
   try {
     fa = assembleFront(front, setup);
     sweep = computeSweep(fa);
     $('asmErr').style.display = 'none';
+    // auto-persist every good state — measurements survive a reload
+    try { localStorage.setItem(AUTOSAVE_KEY, serializeState(front, setup)); } catch { /* storage full */ }
   } catch (err) {
     // keep the last good assembly on screen so the user can back out
     $('asmErr').textContent = 'ASSEMBLY: ' + (err as Error).message;
@@ -531,20 +536,85 @@ $('scanClear').addEventListener('click', () => {
   scene.render();
 });
 
+/* ---------------- scan measurement recipes ---------------- */
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+const distTo = (t: [number, number, number], p: Vector3) =>
+  Math.hypot(t[0] - p.x, t[1] - p.y, t[2] - p.z);
+
+function pickDone(p: Vector3): void {
+  scan.addMarker(p, 0x46d18a);
+  setTimeout(() => { scan.clearMarkers(); scene.render(); }, 2500);
+  rebuildForm();
+  rebuild();
+}
+
+/** All recipes measure rigid part geometry, so a full-droop scan is exact —
+ *  see armPickLengths for the one caveat (out-of-plane drop comes from the
+ *  part card, not the scan). */
+function handlePickReq(req: PickRequest): void {
+  if (!scan.loaded) { scanNote('load a 3D scan first (scan card, bottom left)'); return; }
+  if (!scan.aligned) { scanNote('align the scan first — Align scan button'); return; }
+  const side = req.side ?? 'R';
+  const corner = front.corners[side];
+  const cs = front.chassis.sides[side];
+  switch (req.kind) {
+    case 'point':
+      startPick(req.label, (p) => {
+        setFrontPoint(front, req.path, [r3(p.x), r3(p.y), r3(p.z)]);
+        pickDone(p);
+      });
+      break;
+    case 'two':
+      startPick(req.label + ' — FIRST point', (p1) => {
+        scan.addMarker(p1, 0x36c2ff);
+        scene.render();
+        startPick(req.label + ' — SECOND point', (p2) => {
+          setFrontValue(front, req.path, r3(p1.distanceTo(p2)));
+          pickDone(p2);
+        });
+      });
+      break;
+    case 'ubj':   // one click on the UBJ ball center fills BOTH heim legs
+      startPick(`${side} upper ball joint center`, (p) => {
+        const c = setup.corners[side];
+        const ua = corner.upperArm;
+        ua.legFront.baseLength = r3(distTo(cs.upperFront, p) - c.heimTurnsFront / ua.legFront.heimPitchTPI);
+        ua.legRear.baseLength = r3(distTo(cs.upperRear, p) - c.heimTurnsRear / ua.legRear.heimPitchTPI);
+        pickDone(p);
+      });
+      break;
+    case 'tro': { // tie rod is a rigid link; inner end is chassis-mounted
+      const tri = side === 'R' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+      startPick(`${side} tie rod OUTER end (steering arm ball)`, (p) => {
+        const c = setup.corners[side];
+        const tr = corner.tieRod;
+        tr.baseLength = r3(distTo(tri, p) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
+        pickDone(p);
+      });
+      break;
+    }
+    case 'lbj':   // axial + radius are pose-independent; drop from the card
+      startPick(`${side} LOWER ball joint center`, (p) => {
+        const { axial, radial } = armPickLengths(cs, [p.x, p.y, p.z], corner.lowerArm.bjDrop);
+        corner.lowerArm.bjAxial = r3(axial);
+        corner.lowerArm.length = r3(radial);
+        pickDone(p);
+      });
+      break;
+    case 'shockseat':
+      startPick(`${side} shock LOWER seat on the arm`, (p) => {
+        const { axial, radial } = armPickLengths(cs, [p.x, p.y, p.z], corner.lowerArm.shockSeat.drop);
+        corner.lowerArm.shockSeat.axial = r3(axial);
+        corner.lowerArm.shockSeat.radial = r3(radial);
+        pickDone(p);
+      });
+      break;
+  }
+}
+
 /* ---------------- parts form ---------------- */
 function rebuildForm(): void {
-  buildPartsForm($('hpForm'), { front, setup }, () => { rebuildForm(); rebuild(); }, (path, label) => {
-    if (!scan.loaded) { scanNote('load a 3D scan first (scan card, bottom left)'); return; }
-    if (!scan.aligned) { scanNote('align the scan first — Align scan button'); return; }
-    startPick(label, (p) => {
-      const r3 = (v: number) => Math.round(v * 1000) / 1000;
-      setFrontPoint(front, path, [r3(p.x), r3(p.y), r3(p.z)]);
-      scan.addMarker(p, 0x46d18a);
-      setTimeout(() => { scan.clearMarkers(); scene.render(); }, 2500);
-      rebuildForm();
-      rebuild();
-    });
-  });
+  buildPartsForm($('hpForm'), { front, setup }, () => { rebuildForm(); rebuild(); }, handlePickReq);
 }
 $('hpMirror').addEventListener('click', () => {
   const mirror = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
@@ -559,6 +629,7 @@ $('hpMirror').addEventListener('click', () => {
   rebuildForm(); syncAdjInputs(); rebuild();
 });
 $('hpReset').addEventListener('click', () => {
+  localStorage.removeItem(AUTOSAVE_KEY);
   ({ front, setup } = defaultState());
   rebuildForm(); syncAdjInputs(); rebuild(); captureBaseline(); update();
 });
@@ -606,7 +677,15 @@ $('loadFile').addEventListener('change', (e) => {
 
 window.addEventListener('resize', () => { scene.resize(); update(); });
 
-/* boot */
+/* boot: restore the auto-saved car if there is one */
+try {
+  const saved = localStorage.getItem(AUTOSAVE_KEY);
+  if (saved) {
+    const loaded = loadStateJSON(saved);
+    front = loaded.front;
+    setup = loaded.setup;
+  }
+} catch { localStorage.removeItem(AUTOSAVE_KEY); }
 rebuildForm();
 syncAdjInputs();
 rebuild();

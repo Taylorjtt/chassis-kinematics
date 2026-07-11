@@ -100,6 +100,26 @@ function armSeatFrom(pf: Vec3, pr: Vec3, side: Side, p: Vec3): ArmSeat {
   return { axial, radial: perp.dot(r0dir), drop: -perp.dot(n0dir) };
 }
 
+/**
+ * Turn a scan pick of a point ON the lower arm (ball joint, shock seat) into
+ * the arm-local spec {axial, radial}, given the chassis pivots and the seat's
+ * known out-of-plane drop. Pose-independent: axial and the total perpendicular
+ * radius are rigid under arm rotation, so a full-droop scan measures the part
+ * exactly — only the drop must come from the bench (it can't be split from
+ * one pose).
+ */
+export function armPickLengths(
+  cs: ChassisSide, pick: T3, knownDrop: number,
+): { axial: number; radial: number } {
+  const pf = Va(cs.lowerFront), pr = Va(cs.lowerRear);
+  const u = pr.clone().sub(pf).normalize();
+  const rel = Va(pick).sub(pf);
+  const axial = rel.dot(u);
+  const perp2 = rel.lengthSq() - axial * axial;
+  const radial = Math.sqrt(Math.max(perp2 - knownDrop * knownDrop, 0));
+  return { axial, radial };
+}
+
 function importCorner(hp: V4HP, side: Side): { parts: CornerParts; rideTargetWCz: number } {
   const d = side === 'R' ? hp.R : hp.L;
   const adj = { ...zeroV4Adj(), ...(d.adj ?? {}) };
