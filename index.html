@@ -8,6 +8,7 @@
 </head>
 <body>
 <div id="app">
+  <!-- ================= 3D STAGE (top-left) ================= -->
   <div id="stage">
     <div id="scene"></div>
     <div class="badge">
@@ -50,114 +51,122 @@
     <div id="asmErr"></div>
   </div>
 
-  <div id="panel">
-    <div id="tabbar">
-      <button data-tab="controls" class="on">Controls</button>
-      <button data-tab="setup">Setup</button>
-      <button data-tab="charts">Charts</button>
-    </div>
+  <!-- ================= SPLITTERS ================= -->
+  <div id="vsplit" title="drag to resize"></div>
+  <div id="hsplit" title="drag to resize"></div>
 
-    <!-- ================= CONTROLS TAB ================= -->
-    <div class="tab on" id="tab-controls">
-      <div class="grp">
-        <h3>Wheel Motion</h3>
-        <div class="seg" id="modeSeg">
-          <button data-mode="wheel" class="on">Wheel travel</button>
-          <button data-mode="shock">Shock travel</button>
+  <!-- ================= RIGHT DOCK: controls + charts ================= -->
+  <div id="right">
+    <div class="pane" id="paneControls">
+      <div class="phead">Controls</div>
+      <div class="pbody">
+        <div class="grp">
+          <h3>Wheel Motion</h3>
+          <div class="seg" id="modeSeg">
+            <button data-mode="wheel" class="on">Wheel travel</button>
+            <button data-mode="shock">Shock travel</button>
+          </div>
+          <label class="lockrow"><input type="checkbox" id="lock"> Lock L + R together</label>
+          <div class="ctl L">
+            <label>Left <span id="lblL">wheel</span> travel<span class="val" id="vTravL">0.00 in</span></label>
+            <input type="range" id="travL" min="-4" max="4" step="0.02" value="0">
+          </div>
+          <div class="ctl R">
+            <label>Right <span id="lblR">wheel</span> travel<span class="val" id="vTravR">0.00 in</span></label>
+            <input type="range" id="travR" min="-4" max="4" step="0.02" value="0">
+          </div>
+          <div class="ctl">
+            <label>Steering<span class="val s" id="vSteer">0.0°</span></label>
+            <input type="range" id="steer" min="-25" max="25" step="0.5" value="0">
+          </div>
+          <div class="btns" style="margin-top:12px">
+            <button class="b" id="zeroInputs">Zero motion</button>
+            <button class="b" id="recenter">Reset view</button>
+          </div>
         </div>
-        <label class="lockrow"><input type="checkbox" id="lock"> Lock L + R together</label>
-        <div class="ctl L">
-          <label>Left <span id="lblL">wheel</span> travel<span class="val" id="vTravL">0.00 in</span></label>
-          <input type="range" id="travL" min="-4" max="4" step="0.02" value="0">
-        </div>
-        <div class="ctl R">
-          <label>Right <span id="lblR">wheel</span> travel<span class="val" id="vTravR">0.00 in</span></label>
-          <input type="range" id="travR" min="-4" max="4" step="0.02" value="0">
-        </div>
-        <div class="ctl">
-          <label>Steering<span class="val s" id="vSteer">0.0°</span></label>
-          <input type="range" id="steer" min="-25" max="25" step="0.5" value="0">
-        </div>
-        <div class="btns" style="margin-top:12px">
-          <button class="b" id="zeroInputs">Zero motion</button>
-          <button class="b" id="recenter">Reset view</button>
-        </div>
-      </div>
 
-      <div class="grp">
-        <h3>Adjustments (wrench moves, in turns)</h3>
-        <div class="coordhelp">
-          Turn wrenches, the assembly re-solves — alignment updates as a
-          result. Heims &amp; sleeves in <b>turns</b> (+ = longer). Ride is
-          re-trimmed to target after each change (jack bolt).
+        <div class="grp">
+          <h3>Adjustments (wrench moves, in turns)</h3>
+          <div class="adjrow"><div class="al">Upper heim — front <span>turns</span></div>
+            <div class="pair">
+              <div class="stepper L"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="L" data-tkey="hf"><button data-inc>+</button></div>
+              <div class="stepper R"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="R" data-tkey="hf"><button data-inc>+</button></div>
+            </div></div>
+          <div class="adjrow"><div class="al">Upper heim — rear <span>turns</span></div>
+            <div class="pair">
+              <div class="stepper L"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="L" data-tkey="hr"><button data-inc>+</button></div>
+              <div class="stepper R"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="R" data-tkey="hr"><button data-inc>+</button></div>
+            </div></div>
+          <div class="adjrow"><div class="al">Tie rod sleeve <span>turns</span></div>
+            <div class="pair">
+              <div class="stepper L"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="L" data-tkey="tie"><button data-inc>+</button></div>
+              <div class="stepper R"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="R" data-tkey="tie"><button data-inc>+</button></div>
+            </div></div>
+          <div class="leglen" id="legLens"></div>
+          <div class="adjrow"><div class="al">Upper slugs in/out <span>inches</span></div>
+            <div class="pair">
+              <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="uio"><button data-inc>+</button></div>
+              <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="uio"><button data-inc>+</button></div>
+            </div></div>
+          <div class="adjrow"><div class="al">Upper shims up/down <span>inches</span></div>
+            <div class="pair">
+              <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="uud"><button data-inc>+</button></div>
+              <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="uud"><button data-inc>+</button></div>
+            </div></div>
+          <div class="adjrow"><div class="al">Caster split, front slug <span>inches</span></div>
+            <div class="pair">
+              <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="ucs"><button data-inc>+</button></div>
+              <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="ucs"><button data-inc>+</button></div>
+            </div></div>
+          <div class="adjrow"><div class="al">Lower pivots in/out <span>inches</span></div>
+            <div class="pair">
+              <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="lio"><button data-inc>+</button></div>
+              <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="lio"><button data-inc>+</button></div>
+            </div></div>
+          <div class="adjrow"><div class="al">Lower pivots up/down <span>inches</span></div>
+            <div class="pair">
+              <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="lud"><button data-inc>+</button></div>
+              <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="lud"><button data-inc>+</button></div>
+            </div></div>
+          <div class="btns" style="margin-top:10px">
+            <button class="b" id="adjZero">Zero all adjustments</button>
+          </div>
         </div>
-        <div class="adjrow"><div class="al">Upper heim — front <span>turns</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="L" data-tkey="hf"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="R" data-tkey="hf"><button data-inc>+</button></div>
-          </div></div>
-        <div class="adjrow"><div class="al">Upper heim — rear <span>turns</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="L" data-tkey="hr"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="R" data-tkey="hr"><button data-inc>+</button></div>
-          </div></div>
-        <div class="adjrow"><div class="al">Tie rod sleeve <span>turns</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="L" data-tkey="tie"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.25" value="0" data-turn="R" data-tkey="tie"><button data-inc>+</button></div>
-          </div></div>
-        <div class="leglen" id="legLens"></div>
-        <div class="adjrow"><div class="al">Upper slugs in/out <span>inches</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="uio"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="uio"><button data-inc>+</button></div>
-          </div></div>
-        <div class="adjrow"><div class="al">Upper shims up/down <span>inches</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="uud"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="uud"><button data-inc>+</button></div>
-          </div></div>
-        <div class="adjrow"><div class="al">Caster split, front slug <span>inches</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="ucs"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="ucs"><button data-inc>+</button></div>
-          </div></div>
-        <div class="adjrow"><div class="al">Lower pivots in/out <span>inches</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="lio"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="lio"><button data-inc>+</button></div>
-          </div></div>
-        <div class="adjrow"><div class="al">Lower pivots up/down <span>inches</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="lud"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="lud"><button data-inc>+</button></div>
-          </div></div>
-        <div class="btns" style="margin-top:10px">
-          <button class="b" id="adjZero">Zero all adjustments</button>
-        </div>
-      </div>
 
-      <div class="grp">
-        <h3>Display</h3>
-        <div class="toggles">
-          <label class="tg on"><input type="checkbox" id="tConstruct" checked> Construction lines</label>
-          <label class="tg on"><input type="checkbox" id="tTrail" checked> RC migration trail</label>
-          <label class="tg on"><input type="checkbox" id="tSpring" checked> Spring &amp; shock</label>
-          <label class="tg"><input type="checkbox" id="tWire"> Wheel wireframe</label>
-          <label class="tg on"><input type="checkbox" id="tFront" checked> Front view (2D)</label>
+        <div class="grp">
+          <h3>Display</h3>
+          <div class="toggles">
+            <label class="tg on"><input type="checkbox" id="tConstruct" checked> Construction lines</label>
+            <label class="tg on"><input type="checkbox" id="tTrail" checked> RC migration trail</label>
+            <label class="tg on"><input type="checkbox" id="tSpring" checked> Spring &amp; shock</label>
+            <label class="tg"><input type="checkbox" id="tWire"> Wheel wireframe</label>
+            <label class="tg on"><input type="checkbox" id="tFront" checked> Front view (2D)</label>
+          </div>
         </div>
       </div>
     </div>
-
-    <!-- ================= SETUP TAB ================= -->
-    <div class="tab" id="tab-setup">
-      <div class="grp">
-        <h3>Spindle calibration</h3>
-        <div class="coordhelp">
-          Pin angles can't be tape-measured. Enter what the gauges read
-          <b>right now</b> at ride and calibrate — the pin direction is
-          back-solved and stored on the spindle part.
+    <div id="rsplit" title="drag to resize"></div>
+    <div class="pane" id="paneCharts">
+      <div class="phead">Charts — L/R vs wheel travel</div>
+      <div class="pbody">
+        <div class="charts">
+          <div class="chart"><h5>Camber (°) <b id="cCamb"></b></h5><canvas id="chCamb"></canvas></div>
+          <div class="chart"><h5>Bump steer (toe, in) <b id="cToe"></b></h5><canvas id="chToe"></canvas></div>
+          <div class="chart"><h5>Roll-center height (in) <b id="cRc"></b></h5><canvas id="chRc"></canvas></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= BOTTOM DOCK: setup ================= -->
+  <div id="bottom">
+    <div class="phead">Setup — measurements &amp; part cards <span class="pheadnote">alignment is an output; there is no camber input anywhere</span></div>
+    <div class="pbody" id="setupBody">
+      <div class="card">
+        <h4>Spindle calibration</h4>
+        <div class="cardhelp">Pin angles can't be tape-measured. Enter what the
+          gauges read <b>right now</b> at ride; the pin direction is back-solved
+          and stored on the spindle part.</div>
         <div class="adjrow"><div class="al">Measured camber <span>degrees</span></div>
           <div class="pair">
             <div class="stepper L"><button data-dec>−</button><input type="number" step="0.1" value="-1.0" data-cal="L" data-ckey="camber"><button data-inc>+</button></div>
@@ -174,44 +183,25 @@
         <div class="err" id="calMsg"></div>
       </div>
 
-      <div class="grp">
-        <h3>Parts &amp; chassis measurements</h3>
-        <div class="coordhelp">
-          The car is built from parts: chassis pickups you measure ONCE, plus
-          part cards (arms, spindle, tie rods) read off the bench. Alignment
-          is an output — there is no camber input anywhere.<br><br>
-          <b>x</b> = fore/aft from front-axle center (+ = forward) ·
-          <b>out</b> = distance from centerline (always +) ·
-          <b>z</b> = height off the ground at reference ride
-        </div>
-        <div id="hpForm"></div>
-        <div class="btns" style="margin-top:10px">
-          <button class="b primary" id="hpMirror">Mirror R → L</button>
-          <button class="b" id="hpReset">Reset defaults</button>
+      <div class="card">
+        <h4>Setup file</h4>
+        <div class="cardhelp"><b>x</b> = fore/aft from axle center (+ fwd) ·
+          <b>out</b> = from centerline (always +) · <b>z</b> = height off
+          ground at reference ride. Measure the chassis once; part cards come
+          off the bench.</div>
+        <div class="btns">
+          <button class="b primary" id="hpSave">Save setup</button>
+          <button class="b" id="hpLoad">Load setup / v4</button>
         </div>
         <div class="btns" style="margin-top:8px">
-          <button class="b primary" id="hpSave">Save setup file</button>
-          <button class="b" id="hpLoad">Load setup / v4 file</button>
+          <button class="b primary" id="hpMirror">Mirror R → L</button>
+          <button class="b" id="hpReset">Reset defaults</button>
         </div>
         <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
         <div class="err" id="hpErr"></div>
       </div>
-    </div>
 
-    <!-- ================= CHARTS TAB ================= -->
-    <div class="tab" id="tab-charts">
-      <div class="grp">
-        <h3>Analysis — L/R vs wheel travel</h3>
-        <div class="charts">
-          <div class="chart"><h5>Camber (°) <b id="cCamb"></b></h5><canvas id="chCamb"></canvas></div>
-          <div class="chart"><h5>Bump steer (toe, in) <b id="cToe"></b></h5><canvas id="chToe"></canvas></div>
-          <div class="chart"><h5>Roll-center height (in) <b id="cRc"></b></h5><canvas id="chRc"></canvas></div>
-        </div>
-        <div class="coordhelp" style="margin-top:12px">
-          Curves re-sweep after every adjustment. Dots mark the live position
-          of each wheel on its curve.
-        </div>
-      </div>
+      <div id="hpForm" style="display:contents"></div>
     </div>
   </div>
 </div>

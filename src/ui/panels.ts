@@ -39,28 +39,38 @@ function pointField(ctx: Ctx, label: string, path: string, side: Side | null): s
     + f(0, 'x', arr[0]) + f(1, ylab, yDisp) + f(2, 'z', arr[2]) + '</div></div>';
 }
 
+const card = (title: string, cls: string, body: string) =>
+  `<div class="card ${cls}"><h4>${esc(title)}</h4>${body}</div>`;
+
 export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void): void {
   let h = '';
-  h += '<div class="subhead">Vehicle & setup</div><div class="numrow">'
+  h += card('Vehicle', '', '<div class="numrow">'
     + numField(ctx, 'Wheelbase', 'front', 'chassis.wheelbase', 0.5)
     + numField(ctx, 'Frame raise (in)', 'setup', 'frameRaise', 0.1)
     + numField(ctx, 'Toe gauge dia', 'setup', 'toeGaugeDia', 0.5)
-    + '</div>';
+    + '</div>'
+    + pointField(ctx, 'Pitman pivot (box output)', 'chassis.steeringBox.pivot', null)
+    + pointField(ctx, 'Pitman arm end (link L)', 'chassis.steeringBox.pitmanEnd', null)
+    + pointField(ctx, 'Idler pivot', 'chassis.idler.pivot', null)
+    + pointField(ctx, 'Idler arm end (link R)', 'chassis.idler.armEnd', null));
 
   (['R', 'L'] as Side[]).forEach((side) => {
     const S = side === 'R' ? 'Right' : 'Left';
     const c = `corners.${side}`;
     const spindle = ctx.front.corners[side].spindle;
-    h += `<div class="subhead ${side}">${S} — chassis pickups (measure once)</div>`;
-    h += pointField(ctx, 'Lower arm — front pivot', `chassis.sides.${side}.lowerFront`, side);
-    h += pointField(ctx, 'Lower arm — rear pivot', `chassis.sides.${side}.lowerRear`, side);
-    h += pointField(ctx, 'Upper heim mount — front', `chassis.sides.${side}.upperFront`, side);
-    h += pointField(ctx, 'Upper heim mount — rear', `chassis.sides.${side}.upperRear`, side);
-    h += pointField(ctx, 'Spring pocket (frame)', `chassis.sides.${side}.springPocketUpper`, side);
-    h += pointField(ctx, 'Shock mount (frame)', `chassis.sides.${side}.shockMountUpper`, side);
 
-    h += `<div class="subhead ${side}">${S} — lower arm (stock GM spec)</div><div class="numrow">`
-      + numField(ctx, 'Length (pivot→BJ)', 'front', `${c}.lowerArm.length`)
+    h += card(`${S} — chassis pickups`, side,
+      pointField(ctx, 'Lower arm — front pivot', `chassis.sides.${side}.lowerFront`, side)
+      + pointField(ctx, 'Lower arm — rear pivot', `chassis.sides.${side}.lowerRear`, side)
+      + pointField(ctx, 'Upper heim mount — front', `chassis.sides.${side}.upperFront`, side)
+      + pointField(ctx, 'Upper heim mount — rear', `chassis.sides.${side}.upperRear`, side)
+      + pointField(ctx, 'Spring pocket (frame)', `chassis.sides.${side}.springPocketUpper`, side)
+      + pointField(ctx, 'Shock mount (frame)', `chassis.sides.${side}.shockMountUpper`, side));
+
+    h += card(`${S} — control arms`, side,
+      '<div class="cardhelp">Lower: stock GM stamped arm. Upper: heim-adjustable A-frame.</div>'
+      + '<div class="numrow">'
+      + numField(ctx, 'Lower length (pivot→BJ)', 'front', `${c}.lowerArm.length`)
       + numField(ctx, 'BJ along axis', 'front', `${c}.lowerArm.bjAxial`)
       + numField(ctx, 'BJ drop', 'front', `${c}.lowerArm.bjDrop`)
       + '</div><div class="numrow">'
@@ -71,22 +81,21 @@ export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void
       + numField(ctx, 'Shock seat axial', 'front', `${c}.lowerArm.shockSeat.axial`)
       + numField(ctx, 'Shock seat radial', 'front', `${c}.lowerArm.shockSeat.radial`)
       + numField(ctx, 'Shock seat drop', 'front', `${c}.lowerArm.shockSeat.drop`)
-      + '</div>';
-
-    h += `<div class="subhead ${side}">${S} — upper A-frame (heim legs)</div><div class="numrow">`
-      + numField(ctx, 'Front leg base', 'front', `${c}.upperArm.legFront.baseLength`, 0.01)
-      + numField(ctx, 'Rear leg base', 'front', `${c}.upperArm.legRear.baseLength`, 0.01)
+      + '</div><div class="numrow">'
+      + numField(ctx, 'Upper front leg base', 'front', `${c}.upperArm.legFront.baseLength`, 0.01)
+      + numField(ctx, 'Upper rear leg base', 'front', `${c}.upperArm.legRear.baseLength`, 0.01)
       + '</div><div class="numrow">'
       + numField(ctx, 'Front heim TPI', 'front', `${c}.upperArm.legFront.heimPitchTPI`, 1)
       + numField(ctx, 'Rear heim TPI', 'front', `${c}.upperArm.legRear.heimPitchTPI`, 1)
       + numField(ctx, 'BJ drop (plate)', 'front', `${c}.upperArm.bjDrop`)
-      + '</div>';
+      + '</div>');
 
-    h += `<div class="subhead ${side}">${S} — spindle (GM long, 3-piece)</div>`;
-    h += spindle.calibrated?.pinDir
+    const calBadge = spindle.calibrated?.pinDir
       ? `<div class="calbadge">✓ calibrated pin stored — overrides card angles <button data-clearcal="${side}">clear</button></div>`
       : '<div class="calbadge" style="color:var(--bad)">pin not calibrated — card angles in use (or blank)</div>';
-    h += '<div class="numrow">'
+    h += card(`${S} — spindle (GM long, 3-piece)`, side,
+      calBadge
+      + '<div class="numrow">'
       + numField(ctx, 'Height LBJ→UBJ', 'front', `${c}.spindle.height`, 0.01)
       + numField(ctx, 'Pin boss above LBJ', 'front', `${c}.spindle.pin.heightAboveLBJ`, 0.05)
       + numField(ctx, 'Pin snout length', 'front', `${c}.spindle.pin.snoutLength`, 0.05)
@@ -100,9 +109,10 @@ export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void
       + `<div class="nf"><label>Arm side</label><select data-root="front" data-path="${c}.spindle.steeringArm.side" data-sel="1">`
       + `<option value="front"${spindle.steeringArm.side === 'front' ? ' selected' : ''}>front</option>`
       + `<option value="rear"${spindle.steeringArm.side === 'rear' ? ' selected' : ''}>rear</option>`
-      + '</select></div></div>';
+      + '</select></div></div>');
 
-    h += `<div class="subhead ${side}">${S} — tie rod & wheel</div><div class="numrow">`
+    h += card(`${S} — tie rod & wheel`, side,
+      '<div class="numrow">'
       + numField(ctx, 'Tie rod base len', 'front', `${c}.tieRod.baseLength`, 0.01)
       + numField(ctx, 'Sleeve TPI', 'front', `${c}.tieRod.sleevePitchTPI`, 1)
       + numField(ctx, 'Ride target WC z', 'setup', `corners.${side}.rideTargetWCz`, 0.05)
@@ -110,14 +120,8 @@ export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void
       + numField(ctx, 'Tire radius (loaded)', 'front', `${c}.wheel.radius`, 0.25)
       + numField(ctx, 'Tire width', 'front', `${c}.wheel.width`, 0.25)
       + numField(ctx, 'Wheel offset→hub', 'front', `${c}.wheel.offsetToHubFace`, 0.05)
-      + '</div>';
+      + '</div>');
   });
-
-  h += '<div class="subhead">Steering linkage (y from center, + = right)</div>'
-    + pointField(ctx, 'Pitman pivot (box output)', 'chassis.steeringBox.pivot', null)
-    + pointField(ctx, 'Pitman arm end (link L)', 'chassis.steeringBox.pitmanEnd', null)
-    + pointField(ctx, 'Idler pivot', 'chassis.idler.pivot', null)
-    + pointField(ctx, 'Idler arm end (link R)', 'chassis.idler.armEnd', null);
 
   host.innerHTML = h;
 

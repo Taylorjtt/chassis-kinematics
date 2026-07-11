@@ -125,17 +125,57 @@ function drawCharts(m: FrontState): void {
   $('cRc').textContent = seriesRange(sweep.rcz).toFixed(2) + '" travel';
 }
 
-/* ---------------- tabs ---------------- */
-document.querySelectorAll<HTMLButtonElement>('#tabbar button').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#tabbar button').forEach((b) => b.classList.toggle('on', b === btn));
-    document.querySelectorAll('.tab').forEach((t) => {
-      t.classList.toggle('on', t.id === 'tab-' + btn.dataset.tab);
-    });
-    // charts render at 0×0 while hidden — redraw once the tab is visible
-    update();
+/* ---------------- IDE-style splitters ---------------- */
+interface Layout { rightW: number; bottomH: number; ctrlF: number }
+const layout: Layout = {
+  rightW: 420, bottomH: 320, ctrlF: 0.55,
+  ...JSON.parse(localStorage.getItem('clrLayout') ?? '{}'),
+};
+function applyLayout(): void {
+  const app = $('app');
+  app.style.setProperty('--rightW', layout.rightW + 'px');
+  app.style.setProperty('--bottomH', layout.bottomH + 'px');
+  $('paneControls').style.flexGrow = String(Math.round(layout.ctrlF * 100));
+  $('paneCharts').style.flexGrow = String(Math.round((1 - layout.ctrlF) * 100));
+}
+function wireSplitter(id: string, onMove: (e: PointerEvent) => void): void {
+  const el = $(id);
+  el.addEventListener('pointerdown', (e) => {
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('drag');
+    const move = (ev: PointerEvent) => { onMove(ev); applyLayout(); };
+    const up = () => {
+      el.classList.remove('drag');
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      localStorage.setItem('clrLayout', JSON.stringify(layout));
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    e.preventDefault();
   });
+}
+wireSplitter('vsplit', (e) => {
+  layout.rightW = Math.min(Math.max(window.innerWidth - e.clientX, 300), window.innerWidth * 0.55);
 });
+wireSplitter('hsplit', (e) => {
+  layout.bottomH = Math.min(Math.max(window.innerHeight - e.clientY, 120), window.innerHeight * 0.65);
+});
+wireSplitter('rsplit', (e) => {
+  const r = $('right').getBoundingClientRect();
+  layout.ctrlF = Math.min(Math.max((e.clientY - r.top) / r.height, 0.15), 0.85);
+});
+applyLayout();
+
+// panes and stage resize with the splitters — keep canvases in sync
+let roPending = false;
+const ro = new ResizeObserver(() => {
+  if (roPending) return;
+  roPending = true;
+  requestAnimationFrame(() => { roPending = false; scene.resize(); update(); });
+});
+ro.observe($('scene'));
+ro.observe($('paneCharts'));
 
 /* ---------------- steppers (−/+ around every number input) ---------------- */
 document.querySelectorAll<HTMLElement>('.stepper').forEach((box) => {
