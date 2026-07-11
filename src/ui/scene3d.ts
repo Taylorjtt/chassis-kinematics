@@ -21,7 +21,7 @@ const COL = {
 };
 
 export interface DisplayToggles {
-  construct: boolean; trail: boolean; spring: boolean; wire: boolean;
+  construct: boolean; trail: boolean; spring: boolean; wire: boolean; ghost: boolean;
 }
 
 interface WheelGroup extends THREE.Group {
@@ -51,6 +51,8 @@ export class Scene3D {
   private trail: THREE.Vector3[] = [];
   private trailLine: THREE.Line;
   private frameLines: THREE.Line[] = [];
+  private ghostLines: THREE.Line[] = [];
+  private ghostSet = false;
   private host: HTMLElement;
 
   constructor(host: HTMLElement) {
@@ -91,6 +93,42 @@ export class Scene3D {
     const tm = this.trailLine.material as THREE.LineBasicMaterial;
     tm.transparent = true; tm.opacity = 0.6;
     for (let i = 0; i < 6; i++) this.frameLines.push(this.lineObj(COL.frame, false));
+    // baseline ghost: dashed outline of the pre-adjustment geometry (7 lines/side)
+    for (let i = 0; i < 14; i++) {
+      const l = this.lineObj(0x77879c, true);
+      const m = l.material as THREE.LineDashedMaterial;
+      m.transparent = true; m.opacity = 0.55;
+      l.visible = false;
+      this.ghostLines.push(l);
+    }
+  }
+
+  /** Snapshot the given solved state as the dashed baseline ghost. */
+  setGhost(fa: FrontAssembly, m: FrontState): void {
+    const circle = (center: Vec3, axis: Vec3, r: number): THREE.Vector3[] => {
+      const n = T(axis).normalize();
+      let u = V3(1, 0, 0);
+      if (Math.abs(n.dot(u)) > 0.9) u = V3(0, 0, 1);
+      const a = u.clone().cross(n).normalize(), b = n.clone().cross(a).normalize();
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= 32; i++) {
+        const t = (i / 32) * Math.PI * 2;
+        pts.push(T(center).add(a.clone().multiplyScalar(Math.cos(t) * r)).add(b.clone().multiplyScalar(Math.sin(t) * r)));
+      }
+      return pts;
+    };
+    const sides: Array<[CornerStatic, CornerSolution]> = [[fa.statR, m.cR], [fa.statL, m.cL]];
+    sides.forEach(([stat, c], si) => {
+      const o = si * 7;
+      this.setLine(this.ghostLines[o + 0], [T(stat.lowerFront), T(c.LBJ)]);
+      this.setLine(this.ghostLines[o + 1], [T(stat.lowerRear), T(c.LBJ)]);
+      this.setLine(this.ghostLines[o + 2], [T(stat.upperFront), T(c.UBJ)]);
+      this.setLine(this.ghostLines[o + 3], [T(stat.upperRear), T(c.UBJ)]);
+      this.setLine(this.ghostLines[o + 4], [T(c.LBJ), T(c.UBJ)]);
+      this.setLine(this.ghostLines[o + 5], [T(c.TRI), T(c.TRO)]);
+      this.setLine(this.ghostLines[o + 6], circle(c.WC, c.spin, stat.wheel.radius));
+    });
+    this.ghostSet = true;
   }
 
   resetView(): void {
@@ -252,6 +290,8 @@ export class Scene3D {
     this.setLine(this.frameLines[3], [T(fa.statR.upperRear), T(fa.statL.upperRear)]);
     this.setLine(this.frameLines[4], [T(fa.statR.lowerFront), T(fa.statR.upperFront)]);
     this.setLine(this.frameLines[5], [T(fa.statL.lowerFront), T(fa.statL.upperFront)]);
+
+    this.ghostLines.forEach((l) => { l.visible = tg.ghost && this.ghostSet; });
 
     const showC = tg.construct && !!m.rc.rc;
     this.visR.swingLine.visible = showC; this.visL.swingLine.visible = showC;

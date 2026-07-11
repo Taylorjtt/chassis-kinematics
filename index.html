@@ -128,8 +128,10 @@
               <div class="stepper L"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="L" data-skey="lud"><button data-inc>+</button></div>
               <div class="stepper R"><button data-dec>−</button><input type="number" step="0.05" value="0" data-slug="R" data-skey="lud"><button data-inc>+</button></div>
             </div></div>
+          <div class="leglen" id="adjDelta"></div>
           <div class="btns" style="margin-top:10px">
             <button class="b" id="adjZero">Zero all adjustments</button>
+            <button class="b" id="setBaseline">Set baseline here</button>
           </div>
         </div>
 
@@ -141,6 +143,7 @@
             <label class="tg on"><input type="checkbox" id="tSpring" checked> Spring &amp; shock</label>
             <label class="tg"><input type="checkbox" id="tWire"> Wheel wireframe</label>
             <label class="tg on"><input type="checkbox" id="tFront" checked> Front view (2D)</label>
+            <label class="tg on"><input type="checkbox" id="tGhost" checked> Baseline ghost</label>
           </div>
         </div>
       </div>

@@ -15,7 +15,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
 /* ---------------- workspace grid ---------------- */
 #app{
   display:grid;height:100%;width:100%;
-  --rightW:420px; --bottomH:320px;
+  --rightW:500px; --bottomH:440px;
   grid-template-columns:minmax(320px,1fr) 6px clamp(300px, var(--rightW), 55vw);
   grid-template-rows:minmax(200px,1fr) 6px clamp(120px, var(--bottomH), 65vh);
 }
@@ -40,11 +40,13 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
 .pbody{flex:1;overflow-y:auto;min-height:0}
 #bottom{display:flex;flex-direction:column;background:var(--panel);border-top:none}
 #bottom .pbody{display:flex;gap:12px;overflow-x:auto;overflow-y:hidden;
-  padding:12px 14px;align-items:stretch}
+  padding:12px 14px;align-items:flex-start}
 
 /* setup cards laid out horizontally like an IDE bottom panel */
-.card{flex:none;width:320px;background:var(--panel2);border:1px solid var(--line);
-  border-radius:10px;padding:12px 14px;overflow-y:auto;min-height:0}
+.card{flex:none;width:360px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:10px;padding:12px 14px;overflow-y:auto;max-height:100%;min-height:0}
+.card.wide{width:640px}
+.cg2{display:grid;grid-template-columns:1fr 1fr;column-gap:16px;align-items:start}
 .card h4{margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:.05em;color:var(--ink)}
 .card.R h4{color:var(--accent)} .card.L h4{color:var(--accent2)}
 .cardhelp{font-size:11.5px;color:var(--dim);line-height:1.55;margin-bottom:10px}
@@ -144,7 +146,7 @@ button.b.primary:hover{background:#ff7d3c}
 .charts{display:flex;flex-direction:column;gap:14px;padding:14px 16px}
 .chart h5{margin:0 0 6px;font-size:12.5px;color:var(--dim);display:flex;justify-content:space-between}
 .chart h5 b{color:var(--ink);font-family:var(--mono);font-weight:600;font-size:11.5px}
-.chart canvas{width:100%;height:140px;display:block;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+.chart canvas{width:100%;height:170px;display:block;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
 
 /* ---------------- setup forms ---------------- */
 .ptrow{margin-bottom:10px}

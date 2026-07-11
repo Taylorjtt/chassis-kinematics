@@ -13,10 +13,13 @@ const toeR0 = base.fa.statR.static!.toe;
 const castR0 = base.fa.statR.static!.casterLive;
 
 describe('heim-turn adjustments (entered in turns, spec §2)', () => {
-  it('turns convert to inches through the thread pitch', () => {
+  it('turns convert to inches through the thread pitch (3/4"-16 hardware)', () => {
     const leg = { baseLength: 14, heimPitchTPI: 16 };
-    expect(effectiveLegLength(leg, 8)).toBeCloseTo(14.5, 9);
+    expect(effectiveLegLength(leg, 8)).toBeCloseTo(14.5, 9);        // heim: 1/16" per turn
+    // LH/RH sleeve moves both ends: 2/16 = 0.125" per turn
     expect(effectiveTieRodLength({ kind: 'tieRod', id: 't', name: 't', baseLength: 12, sleevePitchTPI: 16 }, -4))
+      .toBeCloseTo(11.5, 9);
+    expect(effectiveTieRodLength({ kind: 'tieRod', id: 't', name: 't', baseLength: 12, sleevePitchTPI: 16, endsThreaded: 1 }, -4))
       .toBeCloseTo(11.75, 9);
   });
 

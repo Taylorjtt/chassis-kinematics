@@ -159,7 +159,8 @@ function importCorner(hp: V4HP, side: Side): { parts: CornerParts; rideTargetWCz
   const tieRod: TieRod = {
     kind: 'tieRod', id: partId('tr'), name: `Tie rod ${side} (imported)`,
     baseLength: TRO.distanceTo(TRI) + adj.tie,
-    sleevePitchTPI: 16,
+    sleevePitchTPI: 16,           // 3/4"-16 fine-thread sleeve
+    endsThreaded: 2,
   };
 
   const wheel: WheelTire = {

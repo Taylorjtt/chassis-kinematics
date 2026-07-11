@@ -4,7 +4,7 @@
  * front view. Alignment is an output everywhere.
  */
 import './style.css';
-import { FrontEnd, Setup, Side } from './core/parts';
+import { FrontEnd, Setup, Side, effectiveLegLength, effectiveTieRodLength } from './core/parts';
 import { FrontAssembly, assembleFront } from './core/trim';
 import {
   FrontState, SweepData, TravelMode, computeSweep, gainAt, solveFrontState, toeInches,
@@ -39,6 +39,7 @@ function rebuild(): void {
   }
   scene.clearTrail();
   syncLegLengths();
+  updateDeltas();
   update();
 }
 
@@ -53,7 +54,45 @@ function inputs() {
 
 function toggles() {
   const on = (id: string) => ($(id) as HTMLInputElement).checked;
-  return { construct: on('tConstruct'), trail: on('tTrail'), spring: on('tSpring'), wire: on('tWire') };
+  return {
+    construct: on('tConstruct'), trail: on('tTrail'), spring: on('tSpring'),
+    wire: on('tWire'), ghost: on('tGhost'),
+  };
+}
+
+/* ---------------- baseline ghost + deltas ----------------
+ * Real wrench moves change the geometry by hundredths of an inch — correct,
+ * but invisible at model scale. Snapshot a baseline, draw it as a dashed
+ * ghost, and report the alignment deltas right where you wrench. */
+let baseline: FrontAssembly | null = null;
+function captureBaseline(): void {
+  if (!fa) return;
+  baseline = fa;
+  const m0 = solveFrontState(fa, front.chassis.wheelbase, { travL: 0, travR: 0, steerDeg: 0, mode: 'wheel' });
+  scene.setGhost(fa, m0);
+  updateDeltas();
+}
+function updateDeltas(): void {
+  const el = $('adjDelta');
+  if (!fa || !baseline || fa === baseline) { el.innerHTML = 'Δ vs baseline — none (this is the baseline)'; return; }
+  const gd = setup.toeGaugeDia;
+  const d = (side: 'statR' | 'statL') => {
+    const a = fa![side].static!, b = baseline![side].static!;
+    return {
+      camb: a.camber - b.camber,
+      cast: a.casterLive - b.casterLive,
+      toe: toeInches(a.toe, gd) - toeInches(b.toe, gd),
+      trk: 0,
+    };
+  };
+  const R = d('statR'), L = d('statL');
+  const trk = (fa.statR.static!.WC.y - fa.statL.static!.WC.y)
+    - (baseline.statR.static!.WC.y - baseline.statL.static!.WC.y);
+  el.innerHTML =
+    `Δ vs baseline — camber <b>L ${fmt(L.camb, 2)}° R ${fmt(R.camb, 2)}°</b>`
+    + ` · caster <b>L ${fmt(L.cast, 2)}° R ${fmt(R.cast, 2)}°</b><br>`
+    + `toe <b>L ${fmt(L.toe, 3)}" R ${fmt(R.toe, 3)}"</b>`
+    + ` · track <b>${fmt(trk, 3)}"</b>`;
 }
 
 function update(): void {
@@ -127,9 +166,10 @@ function drawCharts(m: FrontState): void {
 
 /* ---------------- IDE-style splitters ---------------- */
 interface Layout { rightW: number; bottomH: number; ctrlF: number }
+const LAYOUT_KEY = 'clrLayout2';
 const layout: Layout = {
-  rightW: 420, bottomH: 320, ctrlF: 0.55,
-  ...JSON.parse(localStorage.getItem('clrLayout') ?? '{}'),
+  rightW: 500, bottomH: 440, ctrlF: 0.55,
+  ...JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '{}'),
 };
 function applyLayout(): void {
   const app = $('app');
@@ -148,7 +188,7 @@ function wireSplitter(id: string, onMove: (e: PointerEvent) => void): void {
       el.classList.remove('drag');
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
-      localStorage.setItem('clrLayout', JSON.stringify(layout));
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
@@ -217,9 +257,9 @@ function syncLegLengths(): void {
   const leg = (side: Side) => {
     const ua = front.corners[side].upperArm, c = setup.corners[side];
     const tr = front.corners[side].tieRod;
-    return `<b>${side}</b> legs ${(ua.legFront.baseLength + c.heimTurnsFront / ua.legFront.heimPitchTPI).toFixed(3)}"`
-      + ` / ${(ua.legRear.baseLength + c.heimTurnsRear / ua.legRear.heimPitchTPI).toFixed(3)}"`
-      + ` · tie ${(tr.baseLength + c.tieRodTurns / tr.sleevePitchTPI).toFixed(3)}"`;
+    return `<b>${side}</b> legs ${effectiveLegLength(ua.legFront, c.heimTurnsFront).toFixed(3)}"`
+      + ` / ${effectiveLegLength(ua.legRear, c.heimTurnsRear).toFixed(3)}"`
+      + ` · tie ${effectiveTieRodLength(tr, c.tieRodTurns).toFixed(3)}"`;
   };
   el.innerHTML = 'Effective lengths — ' + leg('L') + ' &nbsp; ' + leg('R');
 }
@@ -298,7 +338,8 @@ function travInput(which: Side): void {
 $('travL').addEventListener('input', () => travInput('L'));
 $('travR').addEventListener('input', () => travInput('R'));
 $('steer').addEventListener('input', update);
-['tConstruct', 'tTrail', 'tSpring', 'tWire', 'tFront'].forEach((id) => {
+$('setBaseline').addEventListener('click', () => { captureBaseline(); update(); });
+['tConstruct', 'tTrail', 'tSpring', 'tWire', 'tFront', 'tGhost'].forEach((id) => {
   const el = $(id) as HTMLInputElement;
   el.addEventListener('change', () => {
     el.closest('.tg')!.classList.toggle('on', el.checked);
@@ -330,7 +371,7 @@ $('hpMirror').addEventListener('click', () => {
 });
 $('hpReset').addEventListener('click', () => {
   ({ front, setup } = defaultState());
-  rebuildForm(); syncAdjInputs(); rebuild();
+  rebuildForm(); syncAdjInputs(); rebuild(); captureBaseline(); update();
 });
 
 /* ---------------- save / load ---------------- */
@@ -365,7 +406,7 @@ $('loadFile').addEventListener('change', (e) => {
         if (typeof ui.steer === 'number') ($('steer') as HTMLInputElement).value = String(ui.steer);
       }
       $('hpErr').textContent = '';
-      rebuildForm(); syncAdjInputs(); rebuild();
+      rebuildForm(); syncAdjInputs(); rebuild(); captureBaseline(); update();
     } catch (err) {
       $('hpErr').textContent = 'Load error: ' + (err as Error).message;
     }
@@ -380,3 +421,5 @@ window.addEventListener('resize', () => { scene.resize(); update(); });
 rebuildForm();
 syncAdjInputs();
 rebuild();
+captureBaseline();
+update();

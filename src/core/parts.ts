@@ -113,11 +113,14 @@ export interface Spindle extends PartBase {
   calibrated?: SpindleCalibration;
 }
 
-/** Tie rod with adjustable sleeve: effective length = baseLength + turns/TPI. */
+/** Tie rod with adjustable sleeve. A LH/RH double-threaded sleeve (the norm)
+ *  moves BOTH ends per turn: effective length = base + turns·ends/TPI.
+ *  Target hardware is 3/4"-16 fine thread -> 0.125" per sleeve turn. */
 export interface TieRod extends PartBase {
   kind: 'tieRod';
   baseLength: number;
   sleevePitchTPI: number;
+  endsThreaded?: 1 | 2;   // default 2 (LH/RH sleeve)
 }
 
 export interface WheelTire extends PartBase {
@@ -197,5 +200,5 @@ export function effectiveLegLength(leg: UpperArmLeg, turns: number): number {
 }
 
 export function effectiveTieRodLength(rod: TieRod, turns: number): number {
-  return rod.baseLength + turns / rod.sleevePitchTPI;
+  return rod.baseLength + (turns * (rod.endsThreaded ?? 2)) / rod.sleevePitchTPI;
 }
