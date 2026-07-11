@@ -655,16 +655,32 @@ function pickDone(p: Vector3): void {
 /** All recipes measure rigid part geometry, so a full-droop scan is exact —
  *  see armPickLengths for the one caveat (out-of-plane drop comes from the
  *  part card, not the scan). */
+/** Facing the car, its left is on YOUR right — humans mislabel sides all the
+ *  time, so every side-specific pick is ROUTED by where it actually landed
+ *  (y sign), and the label is just a hint. */
+function sideOfPick(p: Vector3, intended: Side | null): Side {
+  const actual: Side = p.y >= 0 ? 'R' : 'L';
+  if (intended && actual !== intended) {
+    $('scanStatus').style.color = 'var(--good)';
+    $('scanStatus').textContent =
+      `that pick is on the car's ${actual === 'R' ? 'RIGHT' : 'LEFT'} side — applied there (labels are hints, sides are detected)`;
+  }
+  return actual;
+}
+
 function handlePickReq(req: PickRequest): void {
   if (!scan.loaded) { scanNote('load a 3D scan first (scan card, bottom left)'); return; }
   if (!scan.aligned) { scanNote('align the scan first — Align scan button'); return; }
   const side = req.side ?? 'R';
-  const corner = front.corners[side];
-  const cs = front.chassis.sides[side];
   switch (req.kind) {
     case 'point':
       startPick(req.label, (p) => {
-        setFrontPoint(front, req.path, [r3(p.x), r3(p.y), r3(p.z)]);
+        let path = req.path;
+        if (req.side) {
+          const actual = sideOfPick(p, req.side);
+          if (actual !== req.side) path = path.replace(`.sides.${req.side}.`, `.sides.${actual}.`);
+        }
+        setFrontPoint(front, path, [r3(p.x), r3(p.y), r3(p.z)]);
         pickDone(p);
       });
       break;
@@ -680,26 +696,30 @@ function handlePickReq(req: PickRequest): void {
       break;
     case 'ubj':   // one click on the UBJ ball center fills BOTH heim legs
       startPick(`${side} upper ball joint center`, (p) => {
-        const c = setup.corners[side];
-        const ua = corner.upperArm;
+        const s = sideOfPick(p, req.side);
+        const c = setup.corners[s];
+        const ua = front.corners[s].upperArm;
+        const cs = front.chassis.sides[s];
         ua.legFront.baseLength = r3(distTo(cs.upperFront, p) - c.heimTurnsFront / ua.legFront.heimPitchTPI);
         ua.legRear.baseLength = r3(distTo(cs.upperRear, p) - c.heimTurnsRear / ua.legRear.heimPitchTPI);
         pickDone(p);
       });
       break;
-    case 'tro': { // tie rod is a rigid link; inner end is chassis-mounted
-      const tri = side === 'R' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+    case 'tro':   // tie rod is a rigid link; inner end is chassis-mounted
       startPick(`${side} tie rod OUTER end (steering arm ball)`, (p) => {
-        const c = setup.corners[side];
-        const tr = corner.tieRod;
+        const s = sideOfPick(p, req.side);
+        const tri = s === 'R' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+        const c = setup.corners[s];
+        const tr = front.corners[s].tieRod;
         tr.baseLength = r3(distTo(tri, p) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
         pickDone(p);
       });
       break;
-    }
     case 'lbj':   // axial + radius are pose-independent; drop from the card
       startPick(`${side} LOWER ball joint center`, (p) => {
-        const { axial, radial } = armPickLengths(cs, [p.x, p.y, p.z], corner.lowerArm.bjDrop);
+        const s = sideOfPick(p, req.side);
+        const corner = front.corners[s];
+        const { axial, radial } = armPickLengths(front.chassis.sides[s], [p.x, p.y, p.z], corner.lowerArm.bjDrop);
         corner.lowerArm.bjAxial = r3(axial);
         corner.lowerArm.length = r3(radial);
         pickDone(p);
@@ -707,9 +727,11 @@ function handlePickReq(req: PickRequest): void {
       break;
     case 'shockseat':
       startPick(`${side} shock LOWER seat on the arm`, (p) => {
-        const { axial, radial } = armPickLengths(cs, [p.x, p.y, p.z], corner.lowerArm.shockSeat.drop);
-        corner.lowerArm.shockSeat.axial = r3(axial);
-        corner.lowerArm.shockSeat.radial = r3(radial);
+        const s = sideOfPick(p, req.side);
+        const la = front.corners[s].lowerArm;
+        const seat = armPickLengths(front.chassis.sides[s], [p.x, p.y, p.z], la.shockSeat.drop);
+        la.shockSeat.axial = r3(seat.axial);
+        la.shockSeat.radial = r3(seat.radial);
         pickDone(p);
       });
       break;
@@ -717,15 +739,17 @@ function handlePickReq(req: PickRequest): void {
       // 4 clicks measure the whole corner: the spindle's rigid geometry is
       // stored in its kingpin frame built from the picked LBJ/UBJ, so the
       // drooped pose doesn't matter (droop toe twists it by <1° — the pin
-      // AXIS still comes from camber/toe calibration afterward)
+      // AXIS still comes from camber/toe calibration afterward). Side is
+      // detected from the first pick, not the card you clicked.
       startPick(`${side} spindle 1/4 — LOWER ball joint center`, (lbj) => {
+        const s = sideOfPick(lbj, req.side);
         scan.addMarker(lbj, 0x36c2ff); scene.render();
-        startPick(`${side} spindle 2/4 — UPPER ball joint center`, (ubj) => {
+        startPick(`${s} spindle 2/4 — UPPER ball joint center`, (ubj) => {
           scan.addMarker(ubj, 0x36c2ff); scene.render();
-          startPick(`${side} spindle 3/4 — tie rod OUTER ball center`, (tro) => {
+          startPick(`${s} spindle 3/4 — tie rod OUTER ball center`, (tro) => {
             scan.addMarker(tro, 0x36c2ff); scene.render();
-            startPick(`${side} spindle 4/4 — hub FACE center`, (hub) => {
-              applySpindleAndArms(side, lbj, ubj, tro, hub);
+            startPick(`${s} spindle 4/4 — hub FACE center`, (hub) => {
+              applySpindleAndArms(s, lbj, ubj, tro, hub);
               pickDone(hub);
             });
           });
@@ -817,6 +841,13 @@ function measureWizard(): void {
         $('scanStatus').style.color = 'var(--good)';
         $('scanStatus').textContent = 'heads up: your L/R picks were mirrored — auto-corrected. LEFT = driver side.';
       }
+      // side beacons for the corner steps: ORANGE = car RIGHT, CYAN = LEFT
+      (['R', 'L'] as Side[]).forEach((s2) => {
+        const cs2 = front.chassis.sides[s2];
+        const col = s2 === 'R' ? 0xff6a1f : 0x36c2ff;
+        [cs2.lowerFront, cs2.lowerRear].forEach((t) =>
+          scan.addMarker(new Vector3(t[0], t[1], t[2]), col));
+      });
       scene.resetView();
     },
   }));
@@ -827,30 +858,55 @@ function measureWizard(): void {
   pt('steering: idler PIVOT', 'chassis.idler.pivot');
   pt('steering: idler ARM END (center link right)', 'chassis.idler.armEnd');
 
-  // 3) each corner: chassis mounts, then the spindle stack
-  (['R', 'L'] as Side[]).forEach((side) => {
-    const S = side === 'R' ? 'RIGHT' : 'LEFT';
-    pt(`${S}: upper heim mount — FRONT`, `chassis.sides.${side}.upperFront`, false);
-    pt(`${S}: upper heim mount — REAR`, `chassis.sides.${side}.upperRear`, false);
-    pt(`${S}: shock CHASSIS mount`, `chassis.sides.${side}.shockMountUpper`);
-    const sp: Vector3[] = [];
-    const grab = (label: string, last = false) => steps.push({
-      label, skippable: false,
+  // 3) each corner: chassis mounts, then the spindle stack.
+  // Side is DETECTED from where the picks land (y sign) — facing the car,
+  // its left is on YOUR right, so labels are hints, never trusted. All 7
+  // structural picks buffer and apply together once the corner's side is
+  // known; the beacons (placed at alignment) show which side is which.
+  let firstResolved: Side | null = null;
+  (['R', 'L'] as Side[]).forEach((intended) => {
+    const S = intended === 'R' ? 'RIGHT (orange beacons)' : 'LEFT (cyan beacons)';
+    const got: (Vector3 | undefined)[] = [];
+    let resolved: Side = intended;
+    const v2t = (p: Vector3): [number, number, number] => [r3(p.x), r3(p.y), r3(p.z)];
+    const grab = (label: string, idx: number, skippable: boolean, last = false) => steps.push({
+      label: `${S}: ${label}`,
+      skippable,
       apply: (p) => {
-        sp.push(p);
-        if (last) applySpindleAndArms(side, sp[0], sp[1], sp[2], sp[3]);
+        got[idx] = p;
+        if (!last) return;
+        const ys = got.filter((q): q is Vector3 => !!q).map((q) => q.y);
+        resolved = ys.reduce((a2, b2) => a2 + b2, 0) / ys.length >= 0 ? 'R' : 'L';
+        if (resolved !== intended) {
+          $('scanStatus').style.color = 'var(--good)';
+          $('scanStatus').textContent =
+            `your "${intended}" corner landed on the car's ${resolved} side — routed there automatically`;
+        }
+        if (firstResolved === resolved) {
+          $('scanStatus').style.color = 'var(--bad)';
+          $('scanStatus').textContent =
+            `both corners resolved to the ${resolved} side — one set of picks is on the wrong side`;
+        }
+        firstResolved = resolved;
+        if (got[0]) setFrontPoint(front, `chassis.sides.${resolved}.upperFront`, v2t(got[0]));
+        if (got[1]) setFrontPoint(front, `chassis.sides.${resolved}.upperRear`, v2t(got[1]));
+        if (got[2]) setFrontPoint(front, `chassis.sides.${resolved}.shockMountUpper`, v2t(got[2]));
+        applySpindleAndArms(resolved, got[3]!, got[4]!, got[5]!, got[6]!);
       },
     });
-    grab(`${S}: LOWER ball joint center`);
-    grab(`${S}: UPPER ball joint center`);
-    grab(`${S}: tie rod OUTER ball center`);
-    grab(`${S}: hub FACE center`, true);
+    grab('upper heim mount — FRONT', 0, false);
+    grab('upper heim mount — REAR', 1, false);
+    grab('shock CHASSIS mount', 2, true);
+    grab('LOWER ball joint center', 3, false);
+    grab('UPPER ball joint center', 4, false);
+    grab('tie rod OUTER ball center', 5, false);
+    grab('hub FACE center', 6, false, true);
     steps.push({
       label: `${S}: shock LOWER seat on the arm`,
       skippable: true,
       apply: (p) => {
-        const la = front.corners[side].lowerArm;
-        const seat = armPickLengths(front.chassis.sides[side], [p.x, p.y, p.z], la.shockSeat.drop);
+        const la = front.corners[resolved].lowerArm;
+        const seat = armPickLengths(front.chassis.sides[resolved], [p.x, p.y, p.z], la.shockSeat.drop);
         la.shockSeat.axial = r3(seat.axial);
         la.shockSeat.radial = r3(seat.radial);
       },
