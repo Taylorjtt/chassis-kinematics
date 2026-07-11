@@ -25,7 +25,7 @@ interface Ctx { front: FrontEnd; setup: Setup }
  *  point = fill an xyz point · two = distance between two clicks ·
  *  ubj/tro/lbj/shockseat = one-click recipes using known chassis points. */
 export interface PickRequest {
-  kind: 'point' | 'two' | 'ubj' | 'tro' | 'lbj' | 'shockseat';
+  kind: 'point' | 'two' | 'ubj' | 'tro' | 'lbj' | 'shockseat' | 'spindle';
   path: string;
   side: Side | null;
   label: string;
@@ -136,8 +136,16 @@ export function buildPartsForm(
     const calBadge = spindle.calibrated?.pinDir
       ? `<div class="calbadge">✓ calibrated pin stored — overrides card angles <button data-clearcal="${side}">clear</button></div>`
       : '<div class="calbadge" style="color:var(--bad)">pin not calibrated — card angles in use (or blank)</div>';
+    const scanBadge = spindle.calibrated?.hubFaceLocal || spindle.calibrated?.wcLocal
+      ? '<div class="calbadge">✓ hub &amp; tie-rod positions measured</div>' : '';
     h += card(`${S} — spindle (GM long, 3-piece)`, `wide ${side}`,
-      calBadge
+      calBadge + scanBadge
+      + '<div class="btns" style="margin-bottom:10px">'
+      + `<button class="b primary" data-picknum="spindle" data-path="" data-side="${side}" data-picklabel="spindle">⌖ Measure spindle from scan (4 clicks)</button>`
+      + '</div>'
+      + '<div class="cardhelp">LBJ → UBJ → tie-rod outer → hub face. Fills the'
+      + ' spindle height + hub/tie-rod positions, and the arm lengths & tie rod'
+      + ' as a bonus. Pin ANGLES still come from camber/toe calibration.</div>'
       + '<div class="cg2"><div class="numrow">'
       + numField(ctx, 'Height LBJ→UBJ', 'front', `${c}.spindle.height`, 0.01, 'two', side)
       + numField(ctx, 'Pin boss above LBJ', 'front', `${c}.spindle.pin.heightAboveLBJ`, 0.05, 'two', side)

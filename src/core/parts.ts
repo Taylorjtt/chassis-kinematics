@@ -100,8 +100,10 @@ export interface SteeringArmPart {
 
 /** Locals in the kingpin frame, stored as {k, f, o} components. */
 export interface SpindleCalibration {
-  pinDir: T3;        // wheel spin axis direction (unit), kingpin-local
+  pinDir?: T3;       // wheel spin axis direction (unit), kingpin-local
   wcLocal?: T3;      // wheel center relative to LBJ, kingpin-local
+  hubFaceLocal?: T3; // hub face center rel. LBJ (scan-measured; wheel center
+                     //   = hub face + pinDir * wheel.offsetToHubFace)
   troLocal?: T3;     // tie-rod outer relative to LBJ, kingpin-local
 }
 

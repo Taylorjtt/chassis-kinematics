@@ -17,6 +17,8 @@ import { chartMulti, seriesRange } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
 import { PickRequest, buildPartsForm, setFrontPoint, setFrontValue } from './ui/panels';
 import { armPickLengths } from './state/setup';
+import { kingpinFrame, toKingpinLocal } from './core/assembly';
+import { V as coreV } from './core/math';
 import { ChassisPicks, ScanManager, ScanUnits, UNIT_TO_INCHES } from './ui/scan';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -496,6 +498,11 @@ function alignWizard(): void {
 function scanNote(msg: string): void {
   $('scanStatus').style.color = 'var(--bad)';
   $('scanStatus').textContent = msg;
+  // also flash it in the viewport — the scan card may be scrolled away
+  const pm = $('pickMsg');
+  pm.textContent = '⌖ ' + msg;
+  pm.style.display = 'block';
+  setTimeout(() => { if (!pickCb) pm.style.display = 'none'; }, 3000);
 }
 $('scanLoad').addEventListener('click', () => $('scanFile').click());
 $('scanFile').addEventListener('change', async (e) => {
@@ -607,6 +614,44 @@ function handlePickReq(req: PickRequest): void {
         corner.lowerArm.shockSeat.axial = r3(axial);
         corner.lowerArm.shockSeat.radial = r3(radial);
         pickDone(p);
+      });
+      break;
+    case 'spindle':
+      // 4 clicks measure the whole corner: the spindle's rigid geometry is
+      // stored in its kingpin frame built from the picked LBJ/UBJ, so the
+      // drooped pose doesn't matter (droop toe twists it by <1° — the pin
+      // AXIS still comes from camber/toe calibration afterward)
+      startPick(`${side} spindle 1/4 — LOWER ball joint center`, (lbj) => {
+        scan.addMarker(lbj, 0x36c2ff); scene.render();
+        startPick(`${side} spindle 2/4 — UPPER ball joint center`, (ubj) => {
+          scan.addMarker(ubj, 0x36c2ff); scene.render();
+          startPick(`${side} spindle 3/4 — tie rod OUTER ball center`, (tro) => {
+            scan.addMarker(tro, 0x36c2ff); scene.render();
+            startPick(`${side} spindle 4/4 — hub FACE center`, (hub) => {
+              const kf = kingpinFrame(coreV(lbj.x, lbj.y, lbj.z), coreV(ubj.x, ubj.y, ubj.z), side);
+              const spindle = corner.spindle;
+              spindle.height = r3(lbj.distanceTo(ubj));
+              spindle.calibrated = {
+                ...spindle.calibrated,               // keep a calibrated pin axis if there is one
+                wcLocal: undefined,                  // hub face + wheel offset now governs
+                hubFaceLocal: toKingpinLocal(kf, coreV(hub.x, hub.y, hub.z)).map(r3) as [number, number, number],
+                troLocal: toKingpinLocal(kf, coreV(tro.x, tro.y, tro.z)).map(r3) as [number, number, number],
+              };
+              // the same clicks are the arm/tie-rod measurements — fill them too
+              const lower = armPickLengths(cs, [lbj.x, lbj.y, lbj.z], corner.lowerArm.bjDrop);
+              corner.lowerArm.bjAxial = r3(lower.axial);
+              corner.lowerArm.length = r3(lower.radial);
+              const c = setup.corners[side];
+              const ua = corner.upperArm;
+              ua.legFront.baseLength = r3(distTo(cs.upperFront, ubj) - c.heimTurnsFront / ua.legFront.heimPitchTPI);
+              ua.legRear.baseLength = r3(distTo(cs.upperRear, ubj) - c.heimTurnsRear / ua.legRear.heimPitchTPI);
+              const tri = side === 'R' ? front.chassis.idler.armEnd : front.chassis.steeringBox.pitmanEnd;
+              const tr = corner.tieRod;
+              tr.baseLength = r3(distTo(tri, tro) - (c.tieRodTurns * (tr.endsThreaded ?? 2)) / tr.sleevePitchTPI);
+              pickDone(hub);
+            });
+          });
+        });
       });
       break;
   }

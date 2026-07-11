@@ -132,31 +132,37 @@ export function steeringArmLocal(arm: SteeringArmPart): T3 {
 export function spindleLocals(spindle: Spindle, wheel: WheelTire): SpindleLocals {
   const cal = spindle.calibrated;
   let pinDir: T3 | null = cal?.pinDir ?? null;
-  let wcLocal: T3 | null = cal?.wcLocal ?? null;
-
-  if ((!pinDir || !wcLocal) && spindle.pin) {
+  if (!pinDir && spindle.pin) {
     const p = spindle.pin;
     const inc = p.inclinationDeg * DEG, sw = p.sweepDeg * DEG;
     // pin drops `inc` below the plane perpendicular to the kingpin and
     // sweeps `sw` toward forward; components are [k, f, o]
-    const cardPin: T3 = [
+    pinDir = [
       -Math.sin(inc),
       Math.cos(inc) * Math.sin(sw),
       Math.cos(inc) * Math.cos(sw),
     ];
-    if (!pinDir) pinDir = cardPin;
-    if (!wcLocal) {
-      const reach = p.snoutLength + wheel.offsetToHubFace;
-      wcLocal = [
-        p.heightAboveLBJ + pinDir[0] * reach,
-        pinDir[1] * reach,
-        pinDir[2] * reach,
-      ];
-    }
+  }
+
+  // wheel center priority: explicit calibrated wc -> scan-measured hub face
+  // + wheel offset along the pin -> pin card geometry
+  let wcLocal: T3 | null = cal?.wcLocal ?? null;
+  if (!wcLocal && cal?.hubFaceLocal && pinDir) {
+    const h = cal.hubFaceLocal, off = wheel.offsetToHubFace;
+    wcLocal = [h[0] + pinDir[0] * off, h[1] + pinDir[1] * off, h[2] + pinDir[2] * off];
+  }
+  if (!wcLocal && spindle.pin && pinDir) {
+    const p = spindle.pin;
+    const reach = p.snoutLength + wheel.offsetToHubFace;
+    wcLocal = [
+      p.heightAboveLBJ + pinDir[0] * reach,
+      pinDir[1] * reach,
+      pinDir[2] * reach,
+    ];
   }
   if (!pinDir || !wcLocal) {
     throw new AssemblyError(
-      `spindle "${spindle.name}": pin geometry unknown — fill in the pin card or run calibration (§5)`,
+      `spindle "${spindle.name}": pin geometry unknown — measure it from the scan, fill in the pin card, or run calibration (§5)`,
     );
   }
   const troLocal = cal?.troLocal ?? steeringArmLocal(spindle.steeringArm);

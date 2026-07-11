@@ -38,7 +38,7 @@ describe('v4 importer', () => {
     const pR = front.corners.R.spindle.calibrated!;
     const pL = front.corners.L.spindle.calibrated!;
     for (let i = 0; i < 3; i++) {
-      expect(pL.pinDir[i]).toBeCloseTo(pR.pinDir[i], 6);
+      expect(pL.pinDir![i]).toBeCloseTo(pR.pinDir![i], 6);
       expect(pL.wcLocal![i]).toBeCloseTo(pR.wcLocal![i], 6);
       expect(pL.troLocal![i]).toBeCloseTo(pR.troLocal![i], 6);
     }
@@ -150,6 +150,45 @@ describe('armPickLengths (scan pick on the arm, any droop)', () => {
     const got = armPickLengths(front.chassis.sides.R, [1.0, 24.5, 3.8], 0.4);
     expect(got.axial).toBeCloseTo(7, 3);
     expect(got.radial).toBeCloseTo(19.5, 3);
+  });
+});
+
+describe('scan-measured spindle (hubFaceLocal path)', () => {
+  it('hub face + zero wheel offset reproduces the wheel center exactly', () => {
+    const { front, setup } = defaultState();
+    const sp = front.corners.R.spindle;
+    const cal = sp.calibrated!;
+    front.corners.R.spindle = {
+      ...sp,
+      calibrated: { pinDir: cal.pinDir, troLocal: cal.troLocal, hubFaceLocal: cal.wcLocal },
+    };
+    const fa = assembleFront(front, setup);
+    expect(fa.statR.static!.camber).toBeCloseTo(-1.0, 2);
+    expect(toeInches(fa.statR.static!.toe, setup.toeGaugeDia)).toBeCloseTo(0, 3);
+  });
+
+  it('nonzero wheel offset walks the wheel center out along the pin', () => {
+    const base = assembleFront(defaultState().front, defaultState().setup);
+    const { front, setup } = defaultState();
+    const sp = front.corners.R.spindle;
+    const cal = sp.calibrated!;
+    const pin = cal.pinDir!;
+    const off = 1.5;
+    front.corners.R.spindle = {
+      ...sp,
+      calibrated: {
+        pinDir: pin, troLocal: cal.troLocal,
+        hubFaceLocal: [
+          cal.wcLocal![0] - pin[0] * off,
+          cal.wcLocal![1] - pin[1] * off,
+          cal.wcLocal![2] - pin[2] * off,
+        ],
+      },
+    };
+    front.corners.R.wheel.offsetToHubFace = off;
+    const fa = assembleFront(front, setup);
+    expect(fa.statR.static!.camber).toBeCloseTo(base.statR.static!.camber, 3);
+    expect(fa.statR.static!.WC.y).toBeCloseTo(base.statR.static!.WC.y, 3);
   });
 });
 
