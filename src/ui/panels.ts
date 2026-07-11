@@ -84,7 +84,7 @@ export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void
 
     h += `<div class="subhead ${side}">${S} — spindle (GM long, 3-piece)</div>`;
     h += spindle.calibrated?.pinDir
-      ? `<div class="calbadge">✓ calibrated pin stored — overrides card angles <button class="b" style="flex:none;padding:2px 8px;margin-left:6px" data-clearcal="${side}">clear</button></div>`
+      ? `<div class="calbadge">✓ calibrated pin stored — overrides card angles <button data-clearcal="${side}">clear</button></div>`
       : '<div class="calbadge" style="color:var(--bad)">pin not calibrated — card angles in use (or blank)</div>';
     h += '<div class="numrow">'
       + numField(ctx, 'Height LBJ→UBJ', 'front', `${c}.spindle.height`, 0.01)

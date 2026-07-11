@@ -125,6 +125,37 @@ function drawCharts(m: FrontState): void {
   $('cRc').textContent = seriesRange(sweep.rcz).toFixed(2) + '" travel';
 }
 
+/* ---------------- tabs ---------------- */
+document.querySelectorAll<HTMLButtonElement>('#tabbar button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#tabbar button').forEach((b) => b.classList.toggle('on', b === btn));
+    document.querySelectorAll('.tab').forEach((t) => {
+      t.classList.toggle('on', t.id === 'tab-' + btn.dataset.tab);
+    });
+    // charts render at 0×0 while hidden — redraw once the tab is visible
+    update();
+  });
+});
+
+/* ---------------- steppers (−/+ around every number input) ---------------- */
+document.querySelectorAll<HTMLElement>('.stepper').forEach((box) => {
+  const input = box.querySelector('input') as HTMLInputElement;
+  const bump = (dir: number) => {
+    const step = parseFloat(input.step) || 1;
+    const v = (parseFloat(input.value) || 0) + dir * step;
+    input.value = String(+v.toFixed(6));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  box.querySelector('[data-dec]')?.addEventListener('click', () => bump(-1));
+  box.querySelector('[data-inc]')?.addEventListener('click', () => bump(+1));
+});
+
+// numeric fields select their content on focus so typing replaces it
+document.addEventListener('focusin', (e) => {
+  const t = e.target as HTMLInputElement;
+  if (t?.tagName === 'INPUT' && t.type === 'number') t.select();
+});
+
 /* ---------------- adjustments in turns ---------------- */
 function syncAdjInputs(): void {
   document.querySelectorAll<HTMLInputElement>('input[data-turn]').forEach((inp) => {
@@ -245,10 +276,6 @@ $('zeroInputs').addEventListener('click', () => {
 function rebuildForm(): void {
   buildPartsForm($('hpForm'), { front, setup }, () => { rebuildForm(); rebuild(); });
 }
-$('hpHead').addEventListener('click', () => {
-  $('hpBody').classList.toggle('open');
-  $('hpChev').textContent = $('hpBody').classList.contains('open') ? '▾ close' : '▸ edit';
-});
 $('hpMirror').addEventListener('click', () => {
   const mirror = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
   const R = front.chassis.sides.R;
