@@ -66,8 +66,6 @@ export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void
       + pointField(ctx, 'Lower arm — rear pivot', `chassis.sides.${side}.lowerRear`, side)
       + pointField(ctx, 'Upper heim mount — front', `chassis.sides.${side}.upperFront`, side)
       + pointField(ctx, 'Upper heim mount — rear', `chassis.sides.${side}.upperRear`, side)
-      + pointField(ctx, 'Spring pocket (frame)', `chassis.sides.${side}.springPocketUpper`, side)
-      + pointField(ctx, 'Shock mount (frame)', `chassis.sides.${side}.shockMountUpper`, side)
       + '</div>');
 
     h += card(`${S} — control arms`, `wide ${side}`,
@@ -77,14 +75,6 @@ export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void
       + numField(ctx, 'BJ along axis', 'front', `${c}.lowerArm.bjAxial`)
       + numField(ctx, 'BJ drop', 'front', `${c}.lowerArm.bjDrop`)
       + '</div><div class="numrow">'
-      + numField(ctx, 'Spring seat axial', 'front', `${c}.lowerArm.springSeat.axial`)
-      + numField(ctx, 'Spring seat radial', 'front', `${c}.lowerArm.springSeat.radial`)
-      + numField(ctx, 'Spring seat drop', 'front', `${c}.lowerArm.springSeat.drop`)
-      + '</div><div class="numrow">'
-      + numField(ctx, 'Shock seat axial', 'front', `${c}.lowerArm.shockSeat.axial`)
-      + numField(ctx, 'Shock seat radial', 'front', `${c}.lowerArm.shockSeat.radial`)
-      + numField(ctx, 'Shock seat drop', 'front', `${c}.lowerArm.shockSeat.drop`)
-      + '</div><div class="numrow">'
       + numField(ctx, 'Upper front leg base', 'front', `${c}.upperArm.legFront.baseLength`, 0.01)
       + numField(ctx, 'Upper rear leg base', 'front', `${c}.upperArm.legRear.baseLength`, 0.01)
       + '</div><div class="numrow">'
@@ -92,6 +82,16 @@ export function buildPartsForm(host: HTMLElement, ctx: Ctx, onChange: () => void
       + numField(ctx, 'Rear heim TPI', 'front', `${c}.upperArm.legRear.heimPitchTPI`, 1)
       + numField(ctx, 'BJ drop (plate)', 'front', `${c}.upperArm.bjDrop`)
       + '</div></div>');
+
+    h += card(`${S} — shock (motion ratio)`, side,
+      '<div class="cardhelp">Upper mount on the frame, lower seat on the arm — these'
+      + ' set the motion ratio (dShock/dWheel in the HUD). Spring omitted for now.</div>'
+      + pointField(ctx, 'Chassis mount (frame)', `chassis.sides.${side}.shockMountUpper`, side)
+      + '<div class="numrow">'
+      + numField(ctx, 'Seat on arm — axial', 'front', `${c}.lowerArm.shockSeat.axial`)
+      + numField(ctx, 'Seat radial', 'front', `${c}.lowerArm.shockSeat.radial`)
+      + numField(ctx, 'Seat drop', 'front', `${c}.lowerArm.shockSeat.drop`)
+      + '</div>');
 
     const calBadge = spindle.calibrated?.pinDir
       ? `<div class="calbadge">✓ calibrated pin stored — overrides card angles <button data-clearcal="${side}">clear</button></div>`

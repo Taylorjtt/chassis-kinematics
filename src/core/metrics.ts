@@ -106,6 +106,7 @@ export interface SweepData {
   trav: number[];
   cambR: number[]; cambL: number[];
   toeR: number[]; toeL: number[];
+  castR: number[]; castL: number[];
   rcz: number[];
 }
 
@@ -114,6 +115,7 @@ export function computeSweep(fa: FrontAssembly, lo = -4, hi = 4, N = 49): SweepD
   const st = fa.steering.solve(0);
   const trav: number[] = [], cambR: number[] = [], cambL: number[] = [];
   const toeR: number[] = [], toeL: number[] = [], rcz: number[] = [];
+  const castR: number[] = [], castL: number[] = [];
   const wr = { phi: 0, psi: 0 }, wl = { phi: 0, psi: 0 };
   for (let i = 0; i < N; i++) {
     const t = lo + ((hi - lo) * i) / (N - 1);
@@ -124,10 +126,11 @@ export function computeSweep(fa: FrontAssembly, lo = -4, hi = 4, N = 49): SweepD
     const cL = solveCorner(statL, thL, st.TRI_L, statL.tieLen, wl);
     cambR.push(cR.camber); cambL.push(cL.camber);
     toeR.push(cR.toe); toeL.push(cL.toe);
+    castR.push(cR.casterLive); castL.push(cL.casterLive);
     const rc = rollCenter(rcInput(statR, cR), rcInput(statL, cL));
     rcz.push(rc.rc ? rc.rc[1] : NaN);
   }
-  return { trav, cambR, cambL, toeR, toeL, rcz };
+  return { trav, cambR, cambL, toeR, toeL, castR, castL, rcz };
 }
 
 /** Local slope of a sweep series at wheel travel wt (v4 gainAt). */

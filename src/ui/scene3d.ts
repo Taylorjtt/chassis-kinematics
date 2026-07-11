@@ -21,7 +21,7 @@ const COL = {
 };
 
 export interface DisplayToggles {
-  construct: boolean; trail: boolean; spring: boolean; wire: boolean; ghost: boolean;
+  construct: boolean; trail: boolean; shock: boolean; wire: boolean; ghost: boolean;
 }
 
 interface WheelGroup extends THREE.Group {
@@ -35,7 +35,7 @@ interface SideVis {
   arm: THREE.Mesh; tie: THREE.Mesh;
   bjL: THREE.Mesh; bjU: THREE.Mesh;
   wheel: WheelGroup;
-  spring: THREE.Line; shockBody: THREE.Mesh; shockShaft: THREE.Mesh;
+  shockBody: THREE.Mesh; shockShaft: THREE.Mesh;
   swingLine: THREE.Line; icDot: THREE.Mesh;
 }
 
@@ -227,25 +227,9 @@ export class Scene3D {
       arm: this.rod(0.36, COL.arm), tie: this.rod(0.3, COL.tie),
       bjL: this.ball(0.65, 0xff5d6c), bjU: this.ball(0.65, 0xff5d6c),
       wheel: this.makeWheel(rimCol),
-      spring: this.lineObj(COL.spring, false),
       shockBody: this.rod(0.55, COL.shock), shockShaft: this.rod(0.26, 0xcdd6e0),
       swingLine: this.lineObj(0x7a8aa0, true), icDot: this.ball(0.6, 0x7a8aa0),
     };
-  }
-
-  private springPts(p1: THREE.Vector3, p2: THREE.Vector3, coils: number, radius: number, seg: number): THREE.Vector3[] {
-    const axis = p2.clone().sub(p1), len = axis.length(), dir = axis.clone().normalize();
-    let u = V3(1, 0, 0);
-    if (Math.abs(dir.dot(u)) > 0.9) u = V3(0, 1, 0);
-    const a = u.clone().cross(dir).normalize(), b = dir.clone().cross(a).normalize();
-    const pts: THREE.Vector3[] = [], N = coils * seg;
-    for (let i = 0; i <= N; i++) {
-      const t = i / N, ang = t * coils * 2 * Math.PI;
-      const c = p1.clone().add(dir.clone().multiplyScalar(t * len));
-      c.add(a.clone().multiplyScalar(Math.cos(ang) * radius)).add(b.clone().multiplyScalar(Math.sin(ang) * radius));
-      pts.push(c);
-    }
-    return pts;
   }
 
   private drawCorner(v: SideVis, stat: CornerStatic, c: CornerSolution): void {
@@ -265,8 +249,6 @@ export class Scene3D {
     v.wheel._rebuild(stat.wheel.radius, stat.wheel.width);
     v.wheel.position.copy(WC);
     v.wheel.quaternion.setFromUnitVectors(V3(0, 1, 0), spin);
-    const sLow = T(stat.lowArm.point(stat.attSpringLow, c.theta));
-    this.setLine(v.spring, this.springPts(sLow, T(stat.springUpper0), 7, 2.0, 16));
     const kLow = T(stat.lowArm.point(stat.attShockLow, c.theta));
     const mid = kLow.clone().lerp(T(stat.shockUpper0), 0.5);
     this.setRod(v.shockBody, kLow, mid); this.setRod(v.shockShaft, mid, T(stat.shockUpper0));
@@ -278,7 +260,7 @@ export class Scene3D {
     for (const v of [this.visR, this.visL]) {
       (v.wheel._tire.material as THREE.MeshStandardMaterial).wireframe = tg.wire;
       (v.wheel._rim.material as THREE.MeshStandardMaterial).wireframe = tg.wire;
-      v.spring.visible = tg.spring; v.shockBody.visible = tg.spring; v.shockShaft.visible = tg.spring;
+      v.shockBody.visible = tg.shock; v.shockShaft.visible = tg.shock;
     }
     this.setRod(this.linkPitman, T(m.st.Pp), T(m.st.CLL));
     this.setRod(this.linkIdler, T(m.st.Pi), T(m.st.CLR));

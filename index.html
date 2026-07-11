@@ -140,7 +140,7 @@
           <div class="toggles">
             <label class="tg on"><input type="checkbox" id="tConstruct" checked> Construction lines</label>
             <label class="tg on"><input type="checkbox" id="tTrail" checked> RC migration trail</label>
-            <label class="tg on"><input type="checkbox" id="tSpring" checked> Spring &amp; shock</label>
+            <label class="tg on"><input type="checkbox" id="tShock" checked> Shock</label>
             <label class="tg"><input type="checkbox" id="tWire"> Wheel wireframe</label>
             <label class="tg on"><input type="checkbox" id="tFront" checked> Front view (2D)</label>
             <label class="tg on"><input type="checkbox" id="tGhost" checked> Baseline ghost</label>
@@ -150,11 +150,12 @@
     </div>
     <div id="rsplit" title="drag to resize"></div>
     <div class="pane" id="paneCharts">
-      <div class="phead">Charts — L/R vs wheel travel</div>
+      <div class="phead">Charts — L/R vs wheel travel <span class="pheadnote">solid = current · dashed = baseline</span></div>
       <div class="pbody">
         <div class="charts">
           <div class="chart"><h5>Camber (°) <b id="cCamb"></b></h5><canvas id="chCamb"></canvas></div>
           <div class="chart"><h5>Bump steer (toe, in) <b id="cToe"></b></h5><canvas id="chToe"></canvas></div>
+          <div class="chart"><h5>Caster (°) <b id="cCast"></b></h5><canvas id="chCast"></canvas></div>
           <div class="chart"><h5>Roll-center height (in) <b id="cRc"></b></h5><canvas id="chRc"></canvas></div>
         </div>
       </div>

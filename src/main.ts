@@ -55,7 +55,7 @@ function inputs() {
 function toggles() {
   const on = (id: string) => ($(id) as HTMLInputElement).checked;
   return {
-    construct: on('tConstruct'), trail: on('tTrail'), spring: on('tSpring'),
+    construct: on('tConstruct'), trail: on('tTrail'), shock: on('tShock'),
     wire: on('tWire'), ghost: on('tGhost'),
   };
 }
@@ -65,9 +65,11 @@ function toggles() {
  * but invisible at model scale. Snapshot a baseline, draw it as a dashed
  * ghost, and report the alignment deltas right where you wrench. */
 let baseline: FrontAssembly | null = null;
+let baselineSweep: SweepData | null = null;
 function captureBaseline(): void {
   if (!fa) return;
   baseline = fa;
+  baselineSweep = computeSweep(fa);
   const m0 = solveFrontState(fa, front.chassis.wheelbase, { travL: 0, travR: 0, steerDeg: 0, mode: 'wheel' });
   scene.setGhost(fa, m0);
   updateDeltas();
@@ -143,32 +145,66 @@ function updateHUD(m: FrontState): void {
   $('vSteer').textContent = fmt(m.steerA, 1) + '°';
 }
 
+/* Charts show the CURRENT sweep solid with the BASELINE sweep dashed
+ * underneath — the whole point is seeing how a wrench move bends the curve. */
 function drawCharts(m: FrontState): void {
   if (!sweep) return;
   const gd = setup.toeGaugeDia;
   const tv = sweep.trav;
+  const showBase = !!baselineSweep && baseline !== fa;
+  const bs = baselineSweep!;
+  const DASH = [5, 4];
+  const base = (ys: number[], color: string) => ({ ys, color, dash: DASH, width: 1.5 });
+  const baseIf = (ys: number[], color: string) => (showBase ? [base(ys, color)] : []);
+
   chartMulti($('chCamb') as HTMLCanvasElement, tv, [
+    ...baseIf(bs?.cambR ?? [], 'rgba(255,106,31,.42)'),
+    ...baseIf(bs?.cambL ?? [], 'rgba(54,194,255,.42)'),
     { ys: sweep.cambR, color: '#ff6a1f', markerX: m.wtR },
     { ys: sweep.cambL, color: '#36c2ff', markerX: m.wtL },
   ]);
   chartMulti($('chToe') as HTMLCanvasElement, tv, [
+    ...baseIf((bs?.toeR ?? []).map((d) => toeInches(d, gd)), 'rgba(255,106,31,.42)'),
+    ...baseIf((bs?.toeL ?? []).map((d) => toeInches(d, gd)), 'rgba(54,194,255,.42)'),
     { ys: sweep.toeR.map((d) => toeInches(d, gd)), color: '#ff6a1f', markerX: m.wtR },
     { ys: sweep.toeL.map((d) => toeInches(d, gd)), color: '#36c2ff', markerX: m.wtL },
   ]);
+  chartMulti($('chCast') as HTMLCanvasElement, tv, [
+    ...baseIf(bs?.castR ?? [], 'rgba(255,106,31,.42)'),
+    ...baseIf(bs?.castL ?? [], 'rgba(54,194,255,.42)'),
+    { ys: sweep.castR, color: '#ff6a1f', markerX: m.wtR },
+    { ys: sweep.castL, color: '#36c2ff', markerX: m.wtL },
+  ]);
   chartMulti($('chRc') as HTMLCanvasElement, tv, [
+    ...baseIf(bs?.rcz ?? [], 'rgba(255,210,63,.42)'),
     { ys: sweep.rcz, color: '#ffd23f', markerX: (m.wtR + m.wtL) / 2 },
   ]);
-  $('cCamb').textContent = 'R ' + seriesRange(sweep.cambR).toFixed(2) + '° / L ' + seriesRange(sweep.cambL).toFixed(2) + '°';
-  $('cToe').textContent = 'R ' + seriesRange(sweep.toeR.map((d) => toeInches(d, gd))).toFixed(3) + '" / L '
-    + seriesRange(sweep.toeL.map((d) => toeInches(d, gd))).toFixed(3) + '"';
-  $('cRc').textContent = seriesRange(sweep.rcz).toFixed(2) + '" travel';
+
+  // header readouts: Δ at ride vs baseline when one is set, else curve range
+  const atRide = (ys: number[]) => ys[Math.floor(ys.length / 2)];
+  if (showBase) {
+    $('cCamb').textContent = 'Δ@ride R ' + fmt(atRide(sweep.cambR) - atRide(bs.cambR), 2)
+      + '° / L ' + fmt(atRide(sweep.cambL) - atRide(bs.cambL), 2) + '°';
+    $('cToe').textContent = 'Δ@ride R '
+      + fmt(toeInches(atRide(sweep.toeR), gd) - toeInches(atRide(bs.toeR), gd), 3)
+      + '" / L ' + fmt(toeInches(atRide(sweep.toeL), gd) - toeInches(atRide(bs.toeL), gd), 3) + '"';
+    $('cCast').textContent = 'Δ@ride R ' + fmt(atRide(sweep.castR) - atRide(bs.castR), 2)
+      + '° / L ' + fmt(atRide(sweep.castL) - atRide(bs.castL), 2) + '°';
+    $('cRc').textContent = 'Δ@ride ' + fmt(atRide(sweep.rcz) - atRide(bs.rcz), 2) + '"';
+  } else {
+    $('cCamb').textContent = 'R ' + seriesRange(sweep.cambR).toFixed(2) + '° / L ' + seriesRange(sweep.cambL).toFixed(2) + '°';
+    $('cToe').textContent = 'R ' + seriesRange(sweep.toeR.map((d) => toeInches(d, gd))).toFixed(3) + '" / L '
+      + seriesRange(sweep.toeL.map((d) => toeInches(d, gd))).toFixed(3) + '"';
+    $('cCast').textContent = 'R ' + seriesRange(sweep.castR).toFixed(2) + '° / L ' + seriesRange(sweep.castL).toFixed(2) + '°';
+    $('cRc').textContent = seriesRange(sweep.rcz).toFixed(2) + '" travel';
+  }
 }
 
 /* ---------------- IDE-style splitters ---------------- */
 interface Layout { rightW: number; bottomH: number; ctrlF: number }
-const LAYOUT_KEY = 'clrLayout2';
+const LAYOUT_KEY = 'clrLayout3';
 const layout: Layout = {
-  rightW: 500, bottomH: 440, ctrlF: 0.55,
+  rightW: 760, bottomH: 400, ctrlF: 0.5,
   ...JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '{}'),
 };
 function applyLayout(): void {
@@ -339,7 +375,7 @@ $('travL').addEventListener('input', () => travInput('L'));
 $('travR').addEventListener('input', () => travInput('R'));
 $('steer').addEventListener('input', update);
 $('setBaseline').addEventListener('click', () => { captureBaseline(); update(); });
-['tConstruct', 'tTrail', 'tSpring', 'tWire', 'tFront', 'tGhost'].forEach((id) => {
+['tConstruct', 'tTrail', 'tShock', 'tWire', 'tFront', 'tGhost'].forEach((id) => {
   const el = $(id) as HTMLInputElement;
   el.addEventListener('change', () => {
     el.closest('.tg')!.classList.toggle('on', el.checked);
@@ -422,4 +458,22 @@ rebuildForm();
 syncAdjInputs();
 rebuild();
 captureBaseline();
+
+// testing/sharing hook: apply adjustments from the URL after the baseline is
+// captured, e.g. ?hfR=6&lioL=0.4 (heim/slug key + side, value in turns/in)
+const qp = new URLSearchParams(location.search);
+let qpTouched = false;
+qp.forEach((val, key) => {
+  const km = key.match(/^(hf|hr|tie|uio|uud|ucs|lio|lud)(R|L)$/);
+  const v = parseFloat(val);
+  if (!km || !isFinite(v)) return;
+  const c = setup.corners[km[2] as Side];
+  if (km[1] === 'hf') c.heimTurnsFront = v;
+  else if (km[1] === 'hr') c.heimTurnsRear = v;
+  else if (km[1] === 'tie') c.tieRodTurns = v;
+  else c.slugs[km[1] as keyof typeof c.slugs] = v;
+  qpTouched = true;
+});
+if (qpTouched) { syncAdjInputs(); rebuild(); }
+
 update();

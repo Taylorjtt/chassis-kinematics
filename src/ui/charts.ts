@@ -4,6 +4,8 @@ export interface ChartSeries {
   ys: number[];
   color: string;
   markerX?: number;
+  dash?: number[];      // e.g. [5,4] for baseline overlays
+  width?: number;
 }
 
 export function chartMulti(canvas: HTMLCanvasElement, xs: number[], series: ChartSeries[]): void {
@@ -27,7 +29,9 @@ export function chartMulti(canvas: HTMLCanvasElement, xs: number[], series: Char
   if (ymin < 0 && ymax > 0) { g.beginPath(); g.moveTo(5, Y(0)); g.lineTo(w - 5, Y(0)); g.stroke(); }
   g.beginPath(); g.moveTo(X(0), 5); g.lineTo(X(0), h - 5); g.stroke();
   series.forEach((s) => {
-    g.strokeStyle = s.color; g.lineWidth = 2; g.beginPath();
+    g.strokeStyle = s.color; g.lineWidth = s.width ?? 2;
+    g.setLineDash(s.dash ?? []);
+    g.beginPath();
     let started = false;
     for (let i = 0; i < xs.length; i++) {
       if (!isFinite(s.ys[i])) { started = false; continue; }
@@ -35,6 +39,7 @@ export function chartMulti(canvas: HTMLCanvasElement, xs: number[], series: Char
       if (!started) { g.moveTo(px, py); started = true; } else g.lineTo(px, py);
     }
     g.stroke();
+    g.setLineDash([]);
     if (s.markerX !== undefined && isFinite(s.markerX)) {
       const mx = X(s.markerX);
       let my: number | null = null;

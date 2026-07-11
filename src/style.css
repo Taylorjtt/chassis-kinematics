@@ -13,17 +13,19 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
   font-family:var(--sans);overflow:hidden}
 
 /* ---------------- workspace grid ---------------- */
+/* bottom dock spans the FULL width; right dock lives beside the stage only —
+ * resizing one never steals space from the other */
 #app{
   display:grid;height:100%;width:100%;
-  --rightW:500px; --bottomH:440px;
-  grid-template-columns:minmax(320px,1fr) 6px clamp(300px, var(--rightW), 55vw);
-  grid-template-rows:minmax(200px,1fr) 6px clamp(120px, var(--bottomH), 65vh);
+  --rightW:760px; --bottomH:400px;
+  grid-template-columns:minmax(280px,1fr) 6px clamp(300px, var(--rightW), 70vw);
+  grid-template-rows:minmax(180px,1fr) 6px clamp(120px, var(--bottomH), 65vh);
 }
 #stage{grid-column:1;grid-row:1;position:relative;min-width:0;min-height:0}
-#hsplit{grid-column:1;grid-row:2;cursor:row-resize}
-#bottom{grid-column:1;grid-row:3;min-height:0}
-#vsplit{grid-column:2;grid-row:1 / -1;cursor:col-resize}
-#right{grid-column:3;grid-row:1 / -1;min-height:0}
+#vsplit{grid-column:2;grid-row:1;cursor:col-resize}
+#right{grid-column:3;grid-row:1;min-height:0}
+#hsplit{grid-column:1 / -1;grid-row:2;cursor:row-resize}
+#bottom{grid-column:1 / -1;grid-row:3;min-height:0}
 #vsplit,#hsplit,#rsplit{background:var(--line);transition:background .12s}
 #vsplit:hover,#hsplit:hover,#rsplit:hover,
 #vsplit.drag,#hsplit.drag,#rsplit.drag{background:var(--accent)}
