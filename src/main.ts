@@ -13,7 +13,7 @@ import { calibrateSpindle } from './core/calibrate';
 import { Vector2, Vector3 } from 'three';
 import { defaultState, loadStateJSON, serializeState } from './state/setup';
 import { Scene3D } from './ui/scene3d';
-import { chartMulti, seriesRange } from './ui/charts';
+import { chartMulti } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
 import { PickRequest, buildPartsForm, getFrontPoint, setFrontPoint, setFrontValue } from './ui/panels';
 import { armPickLengths } from './state/setup';
@@ -102,7 +102,7 @@ function offerArmFix(err: AssemblyError): boolean {
       } catch { /* keep current */ }
     }
     fixingArms = true;
-    rebuildForm(); syncAdjInputs(); rebuild();
+    rebuild(); rebuildForm(); syncAdjInputs();
     fixingArms = false;
     return true;
   }
@@ -118,7 +118,7 @@ function offerArmFix(err: AssemblyError): boolean {
   front.corners[side].upperArm.legFront.baseLength = r3(front.corners[side].upperArm.legFront.baseLength + d);
   front.corners[side].upperArm.legRear.baseLength = r3(front.corners[side].upperArm.legRear.baseLength + d);
   fixingArms = true;   // if something ELSE still fails, show THAT error honestly
-  rebuildForm(); syncAdjInputs(); rebuild();
+  rebuild(); rebuildForm(); syncAdjInputs();
   fixingArms = false;
   if ($('asmErr').style.display !== 'block') {
     $('asmErr').textContent =
@@ -266,24 +266,38 @@ function drawCharts(m: FrontState): void {
     { ys: sweep.rcz, color: '#ffd23f', markerX: (m.wtR + m.wtL) / 2 },
   ]);
 
-  // header readouts: Δ at ride vs baseline when one is set, else curve range
-  const atRide = (ys: number[]) => ys[Math.floor(ys.length / 2)];
-  if (showBase) {
-    $('cCamb').textContent = 'Δ@ride R ' + fmt(atRide(sweep.cambR) - atRide(bs.cambR), 2)
-      + '° / L ' + fmt(atRide(sweep.cambL) - atRide(bs.cambL), 2) + '°';
-    $('cToe').textContent = 'Δ@ride R '
-      + fmt(toeInches(atRide(sweep.toeR), gd) - toeInches(atRide(bs.toeR), gd), 3)
-      + '" / L ' + fmt(toeInches(atRide(sweep.toeL), gd) - toeInches(atRide(bs.toeL), gd), 3) + '"';
-    $('cCast').textContent = 'Δ@ride R ' + fmt(atRide(sweep.castR) - atRide(bs.castR), 2)
-      + '° / L ' + fmt(atRide(sweep.castL) - atRide(bs.castL), 2) + '°';
-    $('cRc').textContent = 'Δ@ride ' + fmt(atRide(sweep.rcz) - atRide(bs.rcz), 2) + '"';
-  } else {
-    $('cCamb').textContent = 'R ' + seriesRange(sweep.cambR).toFixed(2) + '° / L ' + seriesRange(sweep.cambL).toFixed(2) + '°';
-    $('cToe').textContent = 'R ' + seriesRange(sweep.toeR.map((d) => toeInches(d, gd))).toFixed(3) + '" / L '
-      + seriesRange(sweep.toeL.map((d) => toeInches(d, gd))).toFixed(3) + '"';
-    $('cCast').textContent = 'R ' + seriesRange(sweep.castR).toFixed(2) + '° / L ' + seriesRange(sweep.castL).toFixed(2) + '°';
-    $('cRc').textContent = seriesRange(sweep.rcz).toFixed(2) + '" travel';
-  }
+  // LIVE header readouts: current value at the marker (tracks the travel
+  // sliders) + Δ vs the baseline curve AT THE SAME TRAVEL when one is set
+  const interp = (xs: number[], ys: number[], x: number): number => {
+    if (x <= xs[0]) return ys[0];
+    if (x >= xs[xs.length - 1]) return ys[ys.length - 1];
+    let i = 1;
+    while (xs[i] < x) i++;
+    const f = (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+    return ys[i - 1] + f * (ys[i] - ys[i - 1]);
+  };
+  const CY = '#36c2ff', OR = '#ff6a1f', YL = '#ffd23f';
+  const cell = (col: string, cur: string, dlt: string | null) =>
+    `<span style="color:${col}">${cur}</span>`
+    + (dlt !== null ? `<span style="color:var(--dim)"> Δ${dlt}</span>` : '');
+  const pair = (curL: number, curR: number, baseL: number[] | null, baseR: number[] | null, digits: number, unit: string) => {
+    const dL = baseL && showBase ? fmt(curL - interp(bs.trav, baseL, m.wtL), digits) : null;
+    const dR = baseR && showBase ? fmt(curR - interp(bs.trav, baseR, m.wtR), digits) : null;
+    return cell(CY, `L ${fmt(curL, digits)}${unit}`, dL) + ' · ' + cell(OR, `R ${fmt(curR, digits)}${unit}`, dR);
+  };
+  $('cCamb').innerHTML = pair(m.cL.camber, m.cR.camber, bs?.cambL ?? null, bs?.cambR ?? null, 2, '°');
+  $('cToe').innerHTML = pair(
+    toeInches(m.cL.toe, gd), toeInches(m.cR.toe, gd),
+    bs ? bs.toeL.map((d) => toeInches(d, gd)) : null,
+    bs ? bs.toeR.map((d) => toeInches(d, gd)) : null,
+    3, '"',
+  );
+  $('cCast').innerHTML = pair(m.cL.casterLive, m.cR.casterLive, bs?.castL ?? null, bs?.castR ?? null, 2, '°');
+  const rcCur = m.rc.rc ? m.rc.rc[1] : NaN;
+  const rcD = showBase && isFinite(rcCur)
+    ? fmt(rcCur - interp(bs.trav, bs.rcz, (m.wtL + m.wtR) / 2), 2) : null;
+  $('cRc').innerHTML = isFinite(rcCur)
+    ? cell(YL, `${rcCur.toFixed(2)}"`, rcD) : '—';
 }
 
 /* ---------------- IDE-style splitters ---------------- */
@@ -431,7 +445,7 @@ $('calBtn').addEventListener('click', () => {
       );
     });
     $('calMsg').textContent = '';
-    rebuildForm(); rebuild();
+    rebuild(); rebuildForm();
     $('calMsg').style.color = 'var(--good)';
     $('calMsg').textContent = 'spindles calibrated — pin stored on the part';
   } catch (err) {
@@ -657,8 +671,8 @@ function centerLinkEnd(s: Side): [number, number, number] {
 function pickDone(p: Vector3): void {
   scan.addMarker(p, 0x46d18a);
   setTimeout(() => { scan.clearMarkers(); scene.render(); }, 2500);
-  rebuildForm();
   rebuild();
+  rebuildForm();
 }
 
 /** All recipes measure rigid part geometry, so a full-droop scan is exact —
@@ -979,15 +993,24 @@ function cancelWizard(): void {
 let focusedPointPath: string | null = null;
 
 function refreshHighlight(): void {
-  const t = focusedPointPath ? getFrontPoint(front, focusedPointPath) : null;
+  let t: [number, number, number] | null = null;
+  if (focusedPointPath?.startsWith('bj:')) {
+    // virtual path for the ball-joint editors: solved position at ride
+    const [, s, kind] = focusedPointPath.split(':');
+    const stat = fa ? (s === 'R' ? fa.statR : fa.statL) : null;
+    const p = kind === 'lower' ? stat?.static?.LBJ : stat?.static?.UBJ;
+    if (p) t = [p.x, p.y, p.z];
+  } else if (focusedPointPath) {
+    t = getFrontPoint(front, focusedPointPath);
+  }
   scene.setHighlight(t ? coreV(t[0], t[1], t[2]) : null);
   scene.render();
 }
 
 function rebuildForm(): void {
   buildPartsForm(
-    $('hpForm'), { front, setup },
-    (structural) => { if (structural) rebuildForm(); rebuild(); refreshHighlight(); },
+    $('hpForm'), { front, setup, fa },
+    (structural) => { rebuild(); if (structural) rebuildForm(); refreshHighlight(); },
     handlePickReq,
     (path) => { focusedPointPath = path; refreshHighlight(); },
   );
@@ -1002,12 +1025,12 @@ $('hpMirror').addEventListener('click', () => {
   front.corners.L = mirror(front.corners.R);   // part specs are side-symmetric
   setup.corners.L = mirror(setup.corners.R);
   setup.measured.L = mirror(setup.measured.R);
-  rebuildForm(); syncAdjInputs(); rebuild();
+  rebuild(); rebuildForm(); syncAdjInputs();
 });
 $('hpReset').addEventListener('click', () => {
   localStorage.removeItem(AUTOSAVE_KEY);
   ({ front, setup } = defaultState());
-  rebuildForm(); syncAdjInputs(); rebuild(); captureBaseline(); update();
+  rebuild(); rebuildForm(); syncAdjInputs(); captureBaseline(); update();
 });
 
 /* ---------------- save / load ---------------- */
@@ -1042,7 +1065,7 @@ $('loadFile').addEventListener('change', (e) => {
         if (typeof ui.steer === 'number') ($('steer') as HTMLInputElement).value = String(ui.steer);
       }
       $('hpErr').textContent = '';
-      rebuildForm(); syncAdjInputs(); rebuild(); captureBaseline(); update();
+      rebuild(); rebuildForm(); syncAdjInputs(); captureBaseline(); update();
     } catch (err) {
       $('hpErr').textContent = 'Load error: ' + (err as Error).message;
     }

@@ -4,7 +4,9 @@
  * whole assembly; there is no alignment input anywhere.
  */
 import { T3 } from '../core/math';
-import { FrontEnd, Setup, Side } from '../core/parts';
+import { FrontEnd, Setup, Side, effectiveLegLength } from '../core/parts';
+import { FrontAssembly } from '../core/trim';
+import { armPickLengths } from '../state/setup';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
@@ -19,7 +21,7 @@ function setPath(obj: unknown, path: string, value: unknown): void {
   (target as Record<string, unknown>)[last] = value;
 }
 
-interface Ctx { front: FrontEnd; setup: Setup }
+interface Ctx { front: FrontEnd; setup: Setup; fa?: FrontAssembly | null }
 
 /** What a ⌖ button asks the app to measure off the scan.
  *  point = fill an xyz point · two = distance between two clicks ·
@@ -80,6 +82,52 @@ export function getFrontPoint(front: FrontEnd, path: string): T3 | null {
   return Array.isArray(arr) && arr.length === 3 ? (arr as T3) : null;
 }
 
+/* ---- ball joints as x/y/z: the arm spec derives from chassis pickups +
+ * BJ location, so the user edits familiar car coordinates and the part
+ * lengths fall out (same pose-independent math as scan picking). ---- */
+
+const rr3 = (v: number) => Math.round(v * 1000) / 1000;
+
+function solvedBJ(ctx: Ctx, side: Side, kind: 'lower' | 'upper'): T3 | null {
+  const stat = ctx.fa ? (side === 'R' ? ctx.fa.statR : ctx.fa.statL) : null;
+  const c = stat?.static;
+  if (!c) return null;
+  const p = kind === 'lower' ? c.LBJ : c.UBJ;
+  return [rr3(p.x), rr3(p.y), rr3(p.z)];
+}
+
+function bjRow(ctx: Ctx, label: string, side: Side, kind: 'lower' | 'upper'): string {
+  const p = solvedBJ(ctx, side, kind);
+  const pick = kind === 'lower' ? 'lbj' : 'ubj';
+  const f = (ax: number, lab: string, value: number | null) =>
+    `<div class="f"><i>${lab}</i><input type="number" step="0.1" value="${value === null ? '' : value}" `
+    + `data-bjkind="${kind}" data-bjside="${side}" data-bjax="${ax}"></div>`;
+  const yDisp = p === null ? null : (side === 'R' ? -p[1] : p[1]);
+  return `<div class="ptrow"><div class="pl">${esc(label)}`
+    + `<button class="pickbtn" data-picknum="${pick}" data-path="" data-side="${side}" data-picklabel="${esc(label)}">⌖ pick</button>`
+    + '</div><div class="xyz">'
+    + f(0, 'x', p && rr3(p[0])) + f(1, 'out', yDisp && rr3(yDisp)) + f(2, 'z', p && rr3(p[2]))
+    + '</div></div>';
+}
+
+/** Derived arm geometry line, refreshed in place on every BJ edit. */
+function armDerivedText(ctx: Ctx, side: Side): string {
+  const la = ctx.front.corners[side].lowerArm;
+  const ua = ctx.front.corners[side].upperArm;
+  const c = ctx.setup.corners[side];
+  const cs = ctx.front.chassis.sides[side];
+  const uf = cs.upperFront, ur = cs.upperRear;
+  const span = Math.hypot(ur[0] - uf[0], ur[1] - uf[1], ur[2] - uf[2]);
+  const lf = effectiveLegLength(ua.legFront, c.heimTurnsFront);
+  const lr = effectiveLegLength(ua.legRear, c.heimTurnsRear);
+  const a = (lf * lf + span * span - lr * lr) / (2 * span);
+  const rho2 = lf * lf - a * a;
+  const rho = rho2 > 0 ? Math.sqrt(rho2) : NaN;
+  return `derived — lower: radius <b>${la.length.toFixed(3)}"</b> axial ${la.bjAxial.toFixed(3)}" drop ${la.bjDrop.toFixed(2)}"`
+    + ` · upper legs <b>${lf.toFixed(3)}"</b>/<b>${lr.toFixed(3)}"</b>`
+    + ` → BJ↔axis <b>${isFinite(rho) ? rho.toFixed(3) : '—'}"</b>`;
+}
+
 const card = (title: string, cls: string, body: string) =>
   `<div class="card ${cls}"><h4>${esc(title)}</h4>${body}</div>`;
 
@@ -117,21 +165,19 @@ export function buildPartsForm(
       + '</div>');
 
     h += card(`${S} — control arms`, `wide ${side}`,
-      '<div class="cardhelp">Lower: stock GM stamped arm. Upper: heim-adjustable A-frame. '
-      + '⌖ on lower length = click the LBJ (fills length + axial); '
-      + '⌖ on upper leg = click the UBJ (fills both legs).</div>'
-      + '<div class="cg2"><div class="numrow">'
-      + numField(ctx, 'Lower length (pivot→BJ)', 'front', `${c}.lowerArm.length`, 0.05, 'lbj', side)
-      + numField(ctx, 'BJ along axis', 'front', `${c}.lowerArm.bjAxial`)
-      + numField(ctx, 'BJ drop', 'front', `${c}.lowerArm.bjDrop`)
-      + '</div><div class="numrow">'
-      + numField(ctx, 'Upper front leg base', 'front', `${c}.upperArm.legFront.baseLength`, 0.01, 'ubj', side)
-      + numField(ctx, 'Upper rear leg base', 'front', `${c}.upperArm.legRear.baseLength`, 0.01)
-      + '</div><div class="numrow">'
+      '<div class="cardhelp">Ball joints in car coordinates (solved at ride).'
+      + ' Edit x/out/z or ⌖ pick from the scan — the arm spec (pivot-axis'
+      + ' radius, heim leg lengths) is derived from the chassis pickups + BJ.'
+      + ' Front/rear heims adjust independently in the Adjustments panel.</div>'
+      + '<div class="cg2">'
+      + bjRow(ctx, 'Lower ball joint', side, 'lower')
+      + bjRow(ctx, 'Upper ball joint', side, 'upper')
+      + '<div class="numrow">'
+      + numField(ctx, 'Lower BJ drop', 'front', `${c}.lowerArm.bjDrop`)
       + numField(ctx, 'Front heim TPI', 'front', `${c}.upperArm.legFront.heimPitchTPI`, 1)
       + numField(ctx, 'Rear heim TPI', 'front', `${c}.upperArm.legRear.heimPitchTPI`, 1)
-      + numField(ctx, 'BJ drop (plate)', 'front', `${c}.upperArm.bjDrop`)
-      + '</div></div>');
+      + '</div></div>'
+      + `<div class="leglen" id="armDerived${side}">${armDerivedText(ctx, side)}</div>`);
 
     h += card(`${S} — shock (motion ratio)`, side,
       '<div class="cardhelp">Upper mount on the frame, lower seat on the arm — these'
@@ -224,6 +270,45 @@ export function buildPartsForm(
       onChange();
     });
   });
+  // ball-joint x/y/z editors: derive the arm spec from pickups + BJ location
+  host.querySelectorAll<HTMLInputElement>('input[data-bjkind]').forEach((inp) => {
+    const side = inp.dataset.bjside as Side;
+    const kind = inp.dataset.bjkind as 'lower' | 'upper';
+    inp.addEventListener('focus', () => onFocusPoint?.(`bj:${side}:${kind}`));
+    inp.addEventListener('blur', () => onFocusPoint?.(null));
+    inp.addEventListener('keydown', (e) => {
+      if (!e.shiftKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+      e.preventDefault();
+      const v = (parseFloat(inp.value) || 0) + (e.key === 'ArrowUp' ? 0.01 : -0.01);
+      inp.value = String(+v.toFixed(4));
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    inp.addEventListener('input', () => {
+      const trio = [...host.querySelectorAll<HTMLInputElement>(
+        `input[data-bjkind="${kind}"][data-bjside="${side}"]`,
+      )].sort((x, y2) => +x.dataset.bjax! - +y2.dataset.bjax!);
+      const vals = trio.map((t) => parseFloat(t.value));
+      if (vals.some((v) => !isFinite(v))) return;
+      const p: T3 = [vals[0], side === 'R' ? -vals[1] : vals[1], vals[2]];
+      const cs = ctx.front.chassis.sides[side];
+      if (kind === 'lower') {
+        const la = ctx.front.corners[side].lowerArm;
+        const got = armPickLengths(cs, p, la.bjDrop);
+        la.bjAxial = rr3(got.axial);
+        la.length = rr3(got.radial);
+      } else {
+        const ua = ctx.front.corners[side].upperArm;
+        const cc = ctx.setup.corners[side];
+        const dist = (t: T3) => Math.hypot(t[0] - p[0], t[1] - p[1], t[2] - p[2]);
+        ua.legFront.baseLength = rr3(dist(cs.upperFront) - cc.heimTurnsFront / ua.legFront.heimPitchTPI);
+        ua.legRear.baseLength = rr3(dist(cs.upperRear) - cc.heimTurnsRear / ua.legRear.heimPitchTPI);
+      }
+      const derived = host.querySelector(`#armDerived${side}`);
+      if (derived) derived.innerHTML = armDerivedText(ctx, side);
+      onChange();
+    });
+  });
+
   host.querySelectorAll<HTMLButtonElement>('button[data-pickpt]').forEach((btn) => {
     btn.addEventListener('click', () => {
       onPick?.({
