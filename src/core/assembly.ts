@@ -200,6 +200,8 @@ export interface CornerStatic {
   kf0: KingpinFrame;            // reference kingpin frame
   tieLen: number;               // physical tie rod, base + turns/TPI
   rideTarget: number;           // wheel-center height over ground at ride
+  travMin: number;              // geometric travel limits from ride (droop -)
+  travMax: number;              //   set by assembleFront; solver clamps to them
   wheel: WheelTire;
   // solver warm-start / trim state (mutated by solves)
   phi: number; psi: number;
@@ -391,6 +393,7 @@ export function buildCornerStatic(
     uprLen, LBJ0, UBJ0, WC0, TRO0, wheelAxis0, kf0,
     tieLen: effectiveTieRodLength(parts.tieRod, corner.tieRodTurns),
     rideTarget: corner.rideTargetWCz ?? parts.wheel.radius,
+    travMin: -4, travMax: 4,
     wheel: parts.wheel,
     phi: phi0, psi: 0, trimTheta: 0, shockLenTrim: 0, headAng0: 0,
   };

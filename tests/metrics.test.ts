@@ -90,8 +90,8 @@ describe('sweep data', () => {
   it('covers the travel range with finite alignment values', () => {
     const r = rig();
     const sweep = computeSweep(r.fa);
-    expect(sweep.trav[0]).toBe(-4);
-    expect(sweep.trav[sweep.trav.length - 1]).toBe(4);
+    expect(sweep.trav[0]).toBe(-5);
+    expect(sweep.trav[sweep.trav.length - 1]).toBe(5);
     expect(sweep.cambR.every(isFinite)).toBe(true);
     expect(sweep.toeL.every(isFinite)).toBe(true);
   });

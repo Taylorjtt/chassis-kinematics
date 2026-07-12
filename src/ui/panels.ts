@@ -3,9 +3,11 @@
  * racer can measure or read off a spec sheet. Every input re-solves the
  * whole assembly; there is no alignment input anywhere.
  */
-import { T3 } from '../core/math';
-import { FrontEnd, Setup, Side, effectiveLegLength } from '../core/parts';
+import { T3, V as coreV } from '../core/math';
+import { CornerParts, FrontEnd, Setup, Side, effectiveLegLength } from '../core/parts';
 import { FrontAssembly } from '../core/trim';
+import { FrontState } from '../core/metrics';
+import { CornerSolution, fromKingpinLocal, kingpinFrame, spindleLocals, toKingpinLocal } from '../core/assembly';
 import { armPickLengths } from '../state/setup';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -21,13 +23,20 @@ function setPath(obj: unknown, path: string, value: unknown): void {
   (target as Record<string, unknown>)[last] = value;
 }
 
-interface Ctx { front: FrontEnd; setup: Setup; fa?: FrontAssembly | null }
+interface Ctx {
+  front: FrontEnd;
+  setup: Setup;
+  fa?: FrontAssembly | null;
+  /** live solved state (follows the travel sliders) — BJ/hub coordinates
+   *  display in the CURRENT pose so they line up with a drooped scan */
+  live?: () => FrontState | null;
+}
 
 /** What a ⌖ button asks the app to measure off the scan.
  *  point = fill an xyz point · two = distance between two clicks ·
  *  ubj/tro/lbj/shockseat = one-click recipes using known chassis points. */
 export interface PickRequest {
-  kind: 'point' | 'two' | 'ubj' | 'tro' | 'lbj' | 'shockseat' | 'spindle';
+  kind: 'point' | 'two' | 'ubj' | 'tro' | 'lbj' | 'shockseat' | 'spindle' | 'hubface';
   path: string;
   side: Side | null;
   label: string;
@@ -88,17 +97,64 @@ export function getFrontPoint(front: FrontEnd, path: string): T3 | null {
 
 const rr3 = (v: number) => Math.round(v * 1000) / 1000;
 
-function solvedBJ(ctx: Ctx, side: Side, kind: 'lower' | 'upper'): T3 | null {
+export type BJKind = 'lower' | 'upper' | 'hub';
+
+function liveCorner(ctx: Ctx, side: Side): CornerSolution | null {
+  const m = ctx.live?.();
+  if (m) return side === 'R' ? m.cR : m.cL;
   const stat = ctx.fa ? (side === 'R' ? ctx.fa.statR : ctx.fa.statL) : null;
-  const c = stat?.static;
+  return stat?.static ?? null;
+}
+
+function hubLocalOf(corner: CornerParts): T3 | null {
+  const cal = corner.spindle.calibrated;
+  if (cal?.hubFaceLocal) return cal.hubFaceLocal;
+  try {
+    const sl = spindleLocals(corner.spindle, corner.wheel);
+    const off = corner.wheel.offsetToHubFace;
+    return [
+      sl.wcLocal[0] - sl.pinDir[0] * off,
+      sl.wcLocal[1] - sl.pinDir[1] * off,
+      sl.wcLocal[2] - sl.pinDir[2] * off,
+    ];
+  } catch { return null; }
+}
+
+/** BJ / hub-face position at the CURRENT solved pose, car coordinates. */
+export function getSolvedBJ(ctx: Ctx, side: Side, kind: BJKind): T3 | null {
+  const c = liveCorner(ctx, side);
   if (!c) return null;
+  if (kind === 'hub') {
+    const stat = ctx.fa ? (side === 'R' ? ctx.fa.statR : ctx.fa.statL) : null;
+    const local = hubLocalOf(ctx.front.corners[side]);
+    if (!stat || !local) return null;
+    const w = c.xf(fromKingpinLocal(stat.kf0, local));
+    return [rr3(w.x), rr3(w.y), rr3(w.z)];
+  }
   const p = kind === 'lower' ? c.LBJ : c.UBJ;
   return [rr3(p.x), rr3(p.y), rr3(p.z)];
 }
 
-function bjRow(ctx: Ctx, label: string, side: Side, kind: 'lower' | 'upper'): string {
-  const p = solvedBJ(ctx, side, kind);
-  const pick = kind === 'lower' ? 'lbj' : 'ubj';
+/** Push current-pose coordinates into the BJ/hub inputs (skips the focused
+ *  one so nudging is never interrupted). Called on every solver update. */
+export function refreshBJFields(ctx: Ctx): void {
+  document.querySelectorAll<HTMLInputElement>('input[data-bjkind]').forEach((inp) => {
+    if (inp === document.activeElement) return;
+    const side = inp.dataset.bjside as Side;
+    const kind = inp.dataset.bjkind as BJKind;
+    const p = getSolvedBJ(ctx, side, kind);
+    if (!p) return;
+    const ax = +inp.dataset.bjax!;
+    const v = ax === 0 ? p[0] : ax === 1 ? (side === 'R' ? -p[1] : p[1]) : p[2];
+    inp.value = String(rr3(v));
+  });
+}
+
+const BJ_PICK: Record<BJKind, string> = { lower: 'lbj', upper: 'ubj', hub: 'hubface' };
+
+function bjRow(ctx: Ctx, label: string, side: Side, kind: BJKind): string {
+  const p = getSolvedBJ(ctx, side, kind);
+  const pick = BJ_PICK[kind];
   const f = (ax: number, lab: string, value: number | null) =>
     `<div class="f"><i>${lab}</i><input type="number" step="0.1" value="${value === null ? '' : value}" `
     + `data-bjkind="${kind}" data-bjside="${side}" data-bjax="${ax}"></div>`;
@@ -216,7 +272,9 @@ export function buildPartsForm(
       + `<div class="nf"><label>Arm side</label><select data-root="front" data-path="${c}.spindle.steeringArm.side" data-sel="1">`
       + `<option value="front"${spindle.steeringArm.side === 'front' ? ' selected' : ''}>front</option>`
       + `<option value="rear"${spindle.steeringArm.side === 'rear' ? ' selected' : ''}>rear</option>`
-      + '</select></div></div></div>');
+      + '</select></div></div>'
+      + bjRow(ctx, 'Rotor / hub face center', side, 'hub')
+      + '</div>');
 
     h += card(`${S} — tie rod & wheel`, side,
       '<div class="numrow">'
@@ -273,7 +331,7 @@ export function buildPartsForm(
   // ball-joint x/y/z editors: derive the arm spec from pickups + BJ location
   host.querySelectorAll<HTMLInputElement>('input[data-bjkind]').forEach((inp) => {
     const side = inp.dataset.bjside as Side;
-    const kind = inp.dataset.bjkind as 'lower' | 'upper';
+    const kind = inp.dataset.bjkind as BJKind;
     inp.addEventListener('focus', () => onFocusPoint?.(`bj:${side}:${kind}`));
     inp.addEventListener('blur', () => onFocusPoint?.(null));
     inp.addEventListener('keydown', (e) => {
@@ -296,12 +354,24 @@ export function buildPartsForm(
         const got = armPickLengths(cs, p, la.bjDrop);
         la.bjAxial = rr3(got.axial);
         la.length = rr3(got.radial);
-      } else {
+      } else if (kind === 'upper') {
         const ua = ctx.front.corners[side].upperArm;
         const cc = ctx.setup.corners[side];
         const dist = (t: T3) => Math.hypot(t[0] - p[0], t[1] - p[1], t[2] - p[2]);
         ua.legFront.baseLength = rr3(dist(cs.upperFront) - cc.heimTurnsFront / ua.legFront.heimPitchTPI);
         ua.legRear.baseLength = rr3(dist(cs.upperRear) - cc.heimTurnsRear / ua.legRear.heimPitchTPI);
+      } else {
+        // hub face: store in the spindle's kingpin frame at the CURRENT pose
+        const c2 = liveCorner(ctx, side);
+        if (!c2) return;
+        const kf = kingpinFrame(c2.LBJ, c2.UBJ, side);
+        const local = toKingpinLocal(kf, coreV(p[0], p[1], p[2]));
+        const sp = ctx.front.corners[side].spindle;
+        sp.calibrated = {
+          ...sp.calibrated,
+          wcLocal: undefined,
+          hubFaceLocal: [rr3(local[0]), rr3(local[1]), rr3(local[2])],
+        };
       }
       const derived = host.querySelector(`#armDerived${side}`);
       if (derived) derived.innerHTML = armDerivedText(ctx, side);

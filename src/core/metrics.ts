@@ -65,14 +65,19 @@ export interface FrontState {
   trackWidth: number;           // WC_L.y - WC_R.y (+y = LEFT/driver side)
 }
 
+const clampTrav = (v: number, s: { travMin: number; travMax: number }) =>
+  Math.min(Math.max(v, s.travMin), s.travMax);
+
 export function solveFrontState(fa: FrontAssembly, wheelbase: number, inp: MotionInputs): FrontState {
   const { statR, statL } = fa;
   const st = fa.steering.solve(inp.steerDeg);
+  // clamp to the geometric travel limits — beyond them the constraint has no
+  // solution and the spindle would visually "shrink" (see travelLimits)
   const thR = inp.mode === 'wheel'
-    ? thetaForWheel(statR, inp.travR, st.TRI_R, statR.tieLen)
+    ? thetaForWheel(statR, clampTrav(inp.travR, statR), st.TRI_R, statR.tieLen)
     : thetaForShock(statR, inp.travR, st.TRI_R, statR.tieLen);
   const thL = inp.mode === 'wheel'
-    ? thetaForWheel(statL, inp.travL, st.TRI_L, statL.tieLen)
+    ? thetaForWheel(statL, clampTrav(inp.travL, statL), st.TRI_L, statL.tieLen)
     : thetaForShock(statL, inp.travL, st.TRI_L, statL.tieLen);
   const cR = solveCorner(statR, thR, st.TRI_R, statR.tieLen, statR);
   const cL = solveCorner(statL, thL, st.TRI_L, statL.tieLen, statL);
@@ -110,7 +115,7 @@ export interface SweepData {
   rcz: number[];
 }
 
-export function computeSweep(fa: FrontAssembly, lo = -4, hi = 4, N = 49): SweepData {
+export function computeSweep(fa: FrontAssembly, lo = -5, hi = 5, N = 49): SweepData {
   const { statR, statL } = fa;
   const st = fa.steering.solve(0);
   const trav: number[] = [], cambR: number[] = [], cambL: number[] = [];
@@ -120,8 +125,9 @@ export function computeSweep(fa: FrontAssembly, lo = -4, hi = 4, N = 49): SweepD
   for (let i = 0; i < N; i++) {
     const t = lo + ((hi - lo) * i) / (N - 1);
     trav.push(t);
-    const thR = thetaForWheel(statR, t, st.TRI_R, statR.tieLen);
-    const thL = thetaForWheel(statL, t, st.TRI_L, statL.tieLen);
+    // per-side clamp: curves flatline at each corner's real travel limit
+    const thR = thetaForWheel(statR, clampTrav(t, statR), st.TRI_R, statR.tieLen);
+    const thL = thetaForWheel(statL, clampTrav(t, statL), st.TRI_L, statL.tieLen);
     const cR = solveCorner(statR, thR, st.TRI_R, statR.tieLen, wr);
     const cL = solveCorner(statL, thL, st.TRI_L, statL.tieLen, wl);
     cambR.push(cR.camber); cambL.push(cL.camber);

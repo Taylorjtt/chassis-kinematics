@@ -15,7 +15,10 @@ import { defaultState, loadStateJSON, serializeState } from './state/setup';
 import { Scene3D } from './ui/scene3d';
 import { chartMulti } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
-import { PickRequest, buildPartsForm, getFrontPoint, setFrontPoint, setFrontValue } from './ui/panels';
+import {
+  BJKind, PickRequest, buildPartsForm, getFrontPoint, getSolvedBJ, refreshBJFields,
+  setFrontPoint, setFrontValue,
+} from './ui/panels';
 import { armPickLengths } from './state/setup';
 import {
   AssemblyError, cornerDiagnostics, fitUpperLegsToSpindle, kingpinFrame, toKingpinLocal,
@@ -31,6 +34,7 @@ let { front, setup } = defaultState() as { front: FrontEnd; setup: Setup };
 let fa: FrontAssembly | null = null;
 let sweep: SweepData | null = null;
 let mode: TravelMode = 'wheel';
+let lastState: FrontState | null = null;   // latest solve, follows the sliders
 
 const scene = new Scene3D($('scene'));
 
@@ -186,9 +190,14 @@ function updateDeltas(): void {
 function update(): void {
   if (!fa) return;
   const m = solveFrontState(fa, front.chassis.wheelbase, inputs());
+  lastState = m;
   scene.update(fa, m, toggles());
   updateHUD(m);
   drawCharts(m);
+  // BJ / hub coordinate fields track the current pose (line up with a
+  // drooped scan by setting the travel sliders), as does the crosshair
+  refreshBJFields({ front, setup, fa, live: () => lastState });
+  refreshHighlight();
   const fvOn = ($('tFront') as HTMLInputElement).checked;
   $('fv').style.display = fvOn ? 'block' : 'none';
   if (fvOn) drawFrontView($('fvCanvas') as HTMLCanvasElement, $('fvInfo'), fa, m);
@@ -758,6 +767,24 @@ function handlePickReq(req: PickRequest): void {
         pickDone(p);
       });
       break;
+    case 'hubface':
+      // single hub pick has no scan-pose ball joints to build the frame from —
+      // it uses the LIVE model pose, so overlay the model on the scan first
+      startPick(`${side} rotor / hub face center — pose the model onto the scan with the travel sliders first`, (p) => {
+        const s = sideOfPick(p, req.side);
+        if (!lastState) return;
+        const c2 = s === 'R' ? lastState.cR : lastState.cL;
+        const kf = kingpinFrame(c2.LBJ, c2.UBJ, s);
+        const local = toKingpinLocal(kf, coreV(p.x, p.y, p.z));
+        const sp2 = front.corners[s].spindle;
+        sp2.calibrated = {
+          ...sp2.calibrated,
+          wcLocal: undefined,
+          hubFaceLocal: [r3(local[0]), r3(local[1]), r3(local[2])],
+        };
+        pickDone(p);
+      });
+      break;
     case 'spindle':
       // 4 clicks measure the whole corner: the spindle's rigid geometry is
       // stored in its kingpin frame built from the picked LBJ/UBJ, so the
@@ -995,11 +1022,9 @@ let focusedPointPath: string | null = null;
 function refreshHighlight(): void {
   let t: [number, number, number] | null = null;
   if (focusedPointPath?.startsWith('bj:')) {
-    // virtual path for the ball-joint editors: solved position at ride
+    // virtual path for the BJ/hub editors: position at the CURRENT pose
     const [, s, kind] = focusedPointPath.split(':');
-    const stat = fa ? (s === 'R' ? fa.statR : fa.statL) : null;
-    const p = kind === 'lower' ? stat?.static?.LBJ : stat?.static?.UBJ;
-    if (p) t = [p.x, p.y, p.z];
+    t = getSolvedBJ({ front, setup, fa, live: () => lastState }, s as Side, kind as BJKind);
   } else if (focusedPointPath) {
     t = getFrontPoint(front, focusedPointPath);
   }
@@ -1009,7 +1034,7 @@ function refreshHighlight(): void {
 
 function rebuildForm(): void {
   buildPartsForm(
-    $('hpForm'), { front, setup, fa },
+    $('hpForm'), { front, setup, fa, live: () => lastState },
     (structural) => { rebuild(); if (structural) rebuildForm(); refreshHighlight(); },
     handlePickReq,
     (path) => { focusedPointPath = path; refreshHighlight(); },

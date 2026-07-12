@@ -56,6 +56,40 @@ export function motionRatio(stat: CornerStatic, theta: number): number {
   return Math.abs(dW) < 1e-6 ? 0 : Math.abs(dS / dW);
 }
 
+/* ============================================================ TRAVEL LIMITS
+ * Past a certain bump/droop the upper arm simply cannot keep |UBJ-LBJ| at
+ * the spindle height — a real car runs out of travel there. Without a limit
+ * the root-finder returns its closest miss and the knuckle visually
+ * "shrinks". Find the true limits so the solver can clamp instead of lie.
+ */
+export function travelLimits(
+  stat: CornerStatic, TRI: Vec3, tieLen: number, scanTo = 6,
+): { min: number; max: number } {
+  const valid = (dz: number): boolean => {
+    const th = thetaForWheel(stat, dz, TRI, tieLen);
+    const LBJ = stat.lowArm.point(stat.attLBJ, th);
+    const ub = solveUBJ(stat, LBJ, 0);
+    if (Math.abs(ub.UBJ.distanceTo(LBJ) - stat.uprLen) > 0.005) return false;
+    // and the wheel must actually reach the requested height
+    return Math.abs(fullWCz(stat, th, TRI, tieLen) - stat.rideTarget - dz) < 0.02;
+  };
+  const limit = (dir: 1 | -1): number => {
+    let good = 0;
+    for (let d = 0.25; d <= scanTo; d += 0.25) {
+      if (!valid(dir * d)) {
+        // refine within the last good quarter inch
+        for (let f = d - 0.2; f < d; f += 0.05) {
+          if (valid(dir * f)) good = f; else break;
+        }
+        return dir * good;
+      }
+      good = d;
+    }
+    return dir * good;
+  };
+  return { min: limit(-1), max: limit(1) };
+}
+
 /* ============================================================ FRONT ASSEMBLY
  * Equivalent of v4 recomputeStatics(): build both corners from parts +
  * setup, trim ride height, record trimmed static alignment as OUTPUTS.
@@ -84,6 +118,9 @@ export function assembleFront(front: FrontEnd, setup: Setup): FrontAssembly {
     const c = solveCorner(stat, stat.trimTheta, TRI, stat.tieLen, stat);
     stat.headAng0 = c.steerAng;
     stat.static = c;
+    const lim = travelLimits(stat, TRI, stat.tieLen);
+    stat.travMin = lim.min;
+    stat.travMax = lim.max;
     return stat;
   };
   return { statR: build('R'), statL: build('L'), steering };

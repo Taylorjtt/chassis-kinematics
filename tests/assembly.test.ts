@@ -194,6 +194,27 @@ describe('assembly failure modes', () => {
   });
 });
 
+describe('travel limits — the spindle must never "shrink"', () => {
+  it('the default car reports finite geometric travel limits', () => {
+    const r = rig();
+    expect(r.fa.statR.travMin).toBeLessThan(0);
+    expect(r.fa.statR.travMax).toBeGreaterThan(0);
+  });
+  it('over-travel is clamped and rigidity preserved (regression)', () => {
+    // shorten the upper legs so the corner runs out of travel before 4"
+    const r = rig((front) => {
+      front.corners.R.upperArm.legFront.baseLength -= 1.0;
+      front.corners.R.upperArm.legRear.baseLength -= 1.0;
+    });
+    const s = r.solve({ travR: 4, travL: 4 });
+    // the knuckle stays a rigid part even at the slider's extreme...
+    expect(Math.abs(s.cR.UBJ.distanceTo(s.cR.LBJ) - r.fa.statR.uprLen)).toBeLessThan(0.01);
+    expect(Math.abs(s.cL.UBJ.distanceTo(s.cL.LBJ) - r.fa.statL.uprLen)).toBeLessThan(0.01);
+    // ...and the reported wheel travel is the clamped truth
+    expect(s.wtR).toBeLessThanOrEqual(r.fa.statR.travMax + 0.05);
+  });
+});
+
 describe('trim helpers', () => {
   it('thetaForWheel hits requested offsets through the full chain', () => {
     const r = rig();
