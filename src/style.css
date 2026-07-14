@@ -1,6 +1,6 @@
 /* Dark telemetry aesthetic carried over from v4 (spec §6).
- * IDE-style workspace: 3D stage top-left, controls + charts docked right,
- * setup docked bottom — everything visible at once, splitters draggable. */
+ * IDE-style workspace: left rail (parts / tune tools), 3D stage center,
+ * controls docked right — everything visible at once, splitters draggable. */
 :root{
   --bg:#0d1014; --panel:#151a21; --panel2:#1b212b; --line:#283340;
   --ink:#e7edf3; --dim:#8a97a6; --accent:#ff6a1f; --accent2:#36c2ff;
@@ -13,22 +13,123 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
   font-family:var(--sans);overflow:hidden}
 
 /* ---------------- workspace grid ---------------- */
-/* bottom dock spans the FULL width; right dock lives beside the stage only —
- * resizing one never steals space from the other */
+/* left rail: parts + editor / tune tools · center: 3D stage · right: controls */
 #app{
   display:grid;height:100%;width:100%;
-  --rightW:760px; --bottomH:400px;
-  grid-template-columns:minmax(280px,1fr) 6px clamp(300px, var(--rightW), 70vw);
-  grid-template-rows:minmax(180px,1fr) 6px clamp(120px, var(--bottomH), 65vh);
+  --leftW:340px; --rightW:420px;
+  grid-template-columns:
+    clamp(280px, var(--leftW), 40vw) 6px
+    minmax(320px,1fr) 6px
+    clamp(300px, var(--rightW), 40vw);
+  grid-template-rows:100%;
 }
-#stage{grid-column:1;grid-row:1;position:relative;min-width:0;min-height:0}
-#vsplit{grid-column:2;grid-row:1;cursor:col-resize}
-#right{grid-column:3;grid-row:1;min-height:0}
-#hsplit{grid-column:1 / -1;grid-row:2;cursor:row-resize}
-#bottom{grid-column:1 / -1;grid-row:3;min-height:0}
-#vsplit,#hsplit,#rsplit{background:var(--line);transition:background .12s}
-#vsplit:hover,#hsplit:hover,#rsplit:hover,
-#vsplit.drag,#hsplit.drag,#rsplit.drag{background:var(--accent)}
+#leftRail{grid-column:1;grid-row:1;min-height:0;min-width:0}
+#lsplit{grid-column:2;grid-row:1;cursor:col-resize}
+#stage{grid-column:3;grid-row:1;position:relative;min-width:0;min-height:0}
+#vsplit{grid-column:4;grid-row:1;cursor:col-resize}
+#right{grid-column:5;grid-row:1;min-height:0;min-width:0}
+#lsplit,#vsplit,#rsplit{background:var(--line);transition:background .12s}
+#lsplit:hover,#vsplit:hover,#rsplit:hover,
+#lsplit.drag,#vsplit.drag,#rsplit.drag{background:var(--accent)}
+
+/* ---------------- mode gating ---------------- */
+/* everything wearing a mode class is hidden outside that mode */
+body:not([data-mode="build"]) .buildOnly{display:none !important}
+body:not([data-mode="tune"]) .tuneOnly{display:none !important}
+body:not([data-mode="replay"]) .replayOnly{display:none !important}
+body[data-mode="replay"] .buildTuneOnly{display:none !important}
+/* Build mode: shrink the HUD to just the Static block */
+body[data-mode="build"] #hud{width:210px;padding:9px 12px}
+body[data-mode="build"] #hud h4:first-child{margin-top:0}
+/* Replay mode: hide Wheel Motion sliders in the right dock (playback drives it) */
+body[data-mode="replay"] #paneControls .grp:first-child{display:none}
+body[data-mode="replay"] #hud{width:210px;padding:9px 12px}
+
+/* ---------------- replay: session loader + panels ---------------- */
+.replayLoader .dropZone{
+  border:2px dashed var(--line);border-radius:10px;padding:24px 14px;
+  text-align:center;cursor:pointer;transition:.12s;background:var(--panel2)}
+.replayLoader .dropZone:hover,.replayLoader .dropZone.over{
+  border-color:var(--accent);background:#1c2129;color:var(--ink)}
+.replayLoader .dropZoneText{font-family:var(--mono);font-size:12px;color:var(--dim)}
+.sessionSummary{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;
+  font-family:var(--mono);font-size:12px}
+.sessionSummary .sessionKey{color:var(--dim)}
+.sessionSummary .sessionVal{color:var(--ink);font-weight:600;text-align:right}
+.mappingList{display:flex;flex-direction:column;gap:6px}
+.rideRefRow{font-family:var(--mono);font-size:10.5px;color:var(--dim);
+  padding:6px 10px;margin-bottom:6px;background:var(--panel2);border:1px solid var(--line);border-radius:6px}
+.rideRefRow b{color:var(--ink);font-family:var(--sans);font-weight:600}
+.rideRefPickHelp{font-size:10.5px;color:var(--dim);line-height:1.5;margin-bottom:4px}
+.sessionSpeedCanvas{width:100%;height:70px;display:block;background:#0b0e12;
+  border:1px solid var(--line);border-radius:6px;margin-bottom:10px;cursor:crosshair}
+.mapRow{display:grid;grid-template-columns:1fr auto auto;gap:6px 8px;align-items:center;
+  background:var(--panel2);padding:8px 10px;border-radius:8px;border:1px solid var(--line)}
+.mapRow .mapRideRef{grid-column:1 / -1;font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:2px}
+.mapRow .mapName{font-size:12.5px;color:var(--ink);font-weight:600}
+.mapRow .mapName .mapMac{color:var(--dim);font-family:var(--mono);font-size:10.5px;margin-left:6px;font-weight:400}
+.mapRow .mapRole{background:#0b0e12;color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:5px 8px;font-family:var(--sans);font-size:12px}
+.mapRow .mapInvert{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);cursor:pointer}
+.mapRow .mapInvert input{accent-color:var(--accent);width:14px;height:14px}
+.lapList{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.lapBtn{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+  border-radius:7px;padding:8px 10px;font-family:var(--sans);cursor:pointer;transition:.12s}
+.lapBtn:hover{border-color:var(--accent);color:var(--accent)}
+.lapBtn.on{background:var(--accent);color:#0d1014;border-color:var(--accent)}
+.lapBtn .lapNum{font-weight:700;font-size:11.5px;letter-spacing:.04em}
+.lapBtn .lapT{font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
+.lapBtn.best .lapBadge{font-size:9.5px;color:var(--good);background:rgba(70,209,138,.12);
+  padding:1px 5px;border-radius:3px;font-family:var(--mono)}
+.lapBtn.on.best .lapBadge{color:#0d1014;background:rgba(0,0,0,.15)}
+.playRow{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.playRow #playPause{flex:1}
+.playRow #playSpeed{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+  border-radius:7px;padding:9px 8px;font-family:var(--mono);font-size:12px}
+.scrubRow{display:flex;flex-direction:column;gap:4px}
+.scrubTime{font-family:var(--mono);font-size:11px;color:var(--dim);text-align:center}
+
+/* ---------------- replay: stage overlays ---------------- */
+#trackMap{position:absolute;right:16px;bottom:14px;z-index:5;width:300px;
+  background:rgba(21,26,33,.9);backdrop-filter:blur(6px);
+  border:1px solid var(--line);border-radius:10px;padding:8px 10px 7px}
+#trackMap #trackMapCanvas{width:100%;height:180px;display:block;border-radius:6px;background:#0b0e12}
+#trackMap .fvh{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--dim);margin-bottom:5px}
+#speedBadge{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:5;
+  display:flex;flex-direction:column;align-items:center;line-height:1;
+  background:rgba(21,26,33,.85);backdrop-filter:blur(6px);
+  border:1px solid var(--line);border-radius:12px;padding:8px 18px 6px;pointer-events:none}
+#speedBadge .speedNum{font-family:var(--mono);font-size:34px;font-weight:700;color:var(--accent);
+  font-variant-numeric:tabular-nums}
+#speedBadge .speedUnit{font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.14em;margin-top:2px}
+
+/* ---------------- left rail ---------------- */
+#leftRail{display:flex;flex-direction:column;background:var(--panel);
+  border-right:1px solid var(--line);overflow:hidden}
+.railHead{flex:none;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel2)}
+.railBody{flex:1;overflow-y:auto;min-height:0;padding:0}
+.railBody.buildOnly{display:flex;flex-direction:column}
+.modeSeg button{padding:9px;font-size:12.5px;letter-spacing:.08em;text-transform:uppercase}
+.partList{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:10px 12px 4px}
+.partBtn{background:var(--panel2);color:var(--dim);border:1px solid var(--line);
+  border-radius:8px;padding:11px 8px;font-size:12px;font-weight:600;
+  font-family:var(--sans);cursor:pointer;text-align:left;line-height:1.25;
+  transition:.12s}
+.partBtn:hover{border-color:var(--accent);color:var(--ink)}
+.partBtn.on{background:var(--accent);color:#0d1014;border-color:var(--accent)}
+.sideBar{padding:8px 12px 6px}
+.sideBar .sideSeg{margin-bottom:0}
+.sideSeg button.on[data-uiside="L"]{background:var(--accent2);color:#0d1014}
+.sideSeg button.on[data-uiside="R"]{background:var(--accent);color:#0d1014}
+.partEditor{padding:10px 12px 14px;border-bottom:1px solid var(--line)}
+.editorHead h3{margin:2px 0 10px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.editorHead.L h3{color:var(--accent2)}
+.editorHead.R h3{color:var(--accent)}
+.editorBody{}
+.editorBody .subhead{margin:14px 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:600}
+.editorEmpty{padding:20px;text-align:center;color:var(--dim);font-size:12.5px}
+.scanGrp{margin-top:auto}
 
 /* ---------------- docked panes ---------------- */
 #right{display:flex;flex-direction:column;background:var(--panel);min-width:0}
@@ -40,14 +141,10 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
   font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
 .pheadnote{font-weight:400;letter-spacing:.02em;text-transform:none;font-family:var(--mono);font-size:10.5px}
 .pbody{flex:1;overflow-y:auto;min-height:0}
-#bottom{display:flex;flex-direction:column;background:var(--panel);border-top:none}
-#bottom .pbody{display:flex;gap:12px;overflow-x:auto;overflow-y:hidden;
-  padding:12px 14px;align-items:flex-start}
 
-/* setup cards laid out horizontally like an IDE bottom panel */
-.card{flex:none;width:360px;background:var(--panel2);border:1px solid var(--line);
-  border-radius:10px;padding:12px 14px;overflow-y:auto;max-height:100%;min-height:0}
-.card.wide{width:640px}
+/* card is only used inside the setup body when needed */
+.card{background:var(--panel2);border:1px solid var(--line);
+  border-radius:10px;padding:12px 14px;margin-bottom:10px}
 .cg2{display:grid;grid-template-columns:1fr 1fr;column-gap:16px;align-items:start}
 .card h4{margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:.05em;color:var(--ink)}
 .card.R h4{color:var(--accent)} .card.L h4{color:var(--accent2)}
@@ -179,12 +276,33 @@ button.b.primary:hover{background:#ff7d3c}
   font-size:11px;border-radius:6px;padding:4px 10px;cursor:pointer}
 .calbadge button:hover{border-color:var(--accent);color:var(--accent)}
 
-@media(max-width:980px){
-  #app{display:flex;flex-direction:column;overflow-y:auto}
-  #stage{flex:none;height:52vh}
-  #vsplit,#hsplit,#rsplit{display:none}
-  #right,#bottom{flex:none;max-height:none}
-  #bottom .pbody{overflow-x:auto}
-  #hud{width:200px;font-size:11px}
-  #fv{width:220px} #fv canvas{height:110px}
+/* ---------------- mobile: stack stage on top, rail below, right dock as drawer ---------------- */
+.drawerToggle{display:none}
+#drawerBackdrop{display:none}
+@media(max-width:900px){
+  html,body{overflow:hidden}
+  #app{
+    grid-template-columns:1fr;
+    grid-template-rows:minmax(45vh,1fr) auto;
+  }
+  #leftRail{grid-column:1;grid-row:2;border-right:none;border-top:1px solid var(--line);max-height:55vh}
+  #lsplit,#vsplit{display:none}
+  #stage{grid-column:1;grid-row:1;min-height:45vh}
+  #right{position:fixed;top:0;right:0;bottom:0;width:min(380px,92vw);
+    transform:translateX(100%);transition:transform .18s;z-index:20;
+    border-left:1px solid var(--line);box-shadow:-6px 0 24px rgba(0,0,0,.4)}
+  body[data-drawer="right"] #right{transform:translateX(0)}
+  #hud{width:180px;font-size:10.5px;padding:9px 10px}
+  #hud h4{font-size:9px;margin:8px 0 4px}
+  #fv{width:180px} #fv canvas{height:100px}
+  .partList{grid-template-columns:repeat(4,1fr);gap:5px}
+  .partBtn{padding:9px 6px;font-size:11px}
+  .drawerToggle{display:block;position:fixed;bottom:calc(55vh + 8px);right:12px;z-index:22;
+    background:var(--accent);color:#0d1014;border:1px solid var(--accent);
+    border-radius:8px;padding:9px 14px;font-family:var(--sans);font-size:12px;
+    font-weight:700;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.5)}
+  body[data-drawer="right"] .drawerToggle{right:calc(min(380px,92vw) + 12px);bottom:12px}
+  .drawerToggle:hover{border-color:var(--accent);color:var(--accent)}
+  body[data-drawer="right"] #drawerBackdrop{display:block;position:fixed;inset:0;
+    background:rgba(0,0,0,.35);z-index:19}
 }

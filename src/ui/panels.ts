@@ -2,6 +2,10 @@
  * Parts & chassis editor (spec §6 panels/): part cards with the fields a
  * racer can measure or read off a spec sheet. Every input re-solves the
  * whole assembly; there is no alignment input anywhere.
+ *
+ * Two entry points share the same wiring:
+ *   - buildPartsForm(host, ...)  — legacy horizontal card row (M1 shim)
+ *   - renderPartEditor(host, partId, side, ...)  — single-part editor (M2+)
  */
 import { T3, V as coreV } from '../core/math';
 import { CornerParts, FrontEnd, Setup, Side, effectiveLegLength } from '../core/parts';
@@ -42,6 +46,29 @@ export interface PickRequest {
   label: string;
 }
 
+/** The 8 parts of the front end that the user navigates in Build mode. */
+export type PartId =
+  | 'chassis' | 'steering'
+  | 'lca' | 'uca' | 'spindle' | 'tieRod' | 'shock' | 'wheel';
+
+/** Which parts are per-side vs global. */
+export const PART_HAS_SIDE: Record<PartId, boolean> = {
+  chassis: false, steering: false,
+  lca: true, uca: true, spindle: true, tieRod: true, shock: true, wheel: true,
+};
+
+/** Human labels for the nav. */
+export const PART_LABELS: Record<PartId, string> = {
+  chassis: 'Chassis',
+  steering: 'Steering linkage',
+  lca: 'Lower control arm',
+  uca: 'Upper control arm',
+  spindle: 'Spindle',
+  tieRod: 'Tie rod',
+  shock: 'Shock',
+  wheel: 'Wheel & tire',
+};
+
 function numField(
   ctx: Ctx, label: string, root: 'front' | 'setup', path: string, step = 0.05,
   pick?: PickRequest['kind'], side?: Side,
@@ -79,10 +106,18 @@ function pointField(ctx: Ctx, label: string, path: string, side: Side | null): s
     + f(0, 'x', arr[0]) + f(1, ylab, yDisp) + f(2, 'z', arr[2]) + '</div></div>';
 }
 
-/** Write a picked scan point (car-frame coords) into a chassis point path. */
+/** Write a picked scan point (car-frame coords) into a chassis point path.
+ *  If the target array doesn't exist yet (optional field on a legacy save),
+ *  create it — parent objects are always present in our schema. */
 export function setFrontPoint(front: FrontEnd, path: string, t3: T3): void {
-  const arr = getPath(front, path) as T3;
-  arr[0] = t3[0]; arr[1] = t3[1]; arr[2] = t3[2];
+  const arr = getPath(front, path) as T3 | undefined;
+  if (arr) { arr[0] = t3[0]; arr[1] = t3[1]; arr[2] = t3[2]; return; }
+  const keys = path.split('.');
+  const last = keys.pop()!;
+  const target = keys.reduce<Record<string, unknown>>(
+    (o, k) => o[k] as Record<string, unknown>, front as unknown as Record<string, unknown>,
+  );
+  target[last] = [t3[0], t3[1], t3[2]];
 }
 
 /** Read a chassis point path (for the live highlight while fine-tuning). */
@@ -187,16 +222,15 @@ function armDerivedText(ctx: Ctx, side: Side): string {
 const card = (title: string, cls: string, body: string) =>
   `<div class="card ${cls}"><h4>${esc(title)}</h4>${body}</div>`;
 
-/** onChange(structural): structural=true means the form layout itself must
- *  re-render (badges, pin creation) — plain value edits must NOT re-render
- *  or the focused field loses focus mid-nudge. */
-export function buildPartsForm(
-  host: HTMLElement, ctx: Ctx, onChange: (structural?: boolean) => void,
-  onPick?: (req: PickRequest) => void,
-  onFocusPoint?: (path: string | null) => void,
-): void {
-  let h = '';
-  h += card('Vehicle & steering linkage', 'wide', '<div class="numrow">'
+/* ============================================================
+ *  Per-part fragment builders — shared by both entry points.
+ *  Each returns *the interior body only* (no .card wrapper), so
+ *  the shim can drop them into legacy cards and the M2 editor
+ *  can drop them into a single #partEditor container.
+ * ============================================================ */
+
+function chassisSteeringBody(ctx: Ctx): string {
+  return '<div class="numrow">'
     + numField(ctx, 'Wheelbase', 'front', 'chassis.wheelbase', 0.5)
     + numField(ctx, 'Frame raise (in)', 'setup', 'frameRaise', 0.1)
     + numField(ctx, 'Toe gauge dia', 'setup', 'toeGaugeDia', 0.5)
@@ -205,92 +239,286 @@ export function buildPartsForm(
     + pointField(ctx, 'Pitman arm end (link L)', 'chassis.steeringBox.pitmanEnd', null)
     + pointField(ctx, 'Idler pivot', 'chassis.idler.pivot', null)
     + pointField(ctx, 'Idler arm end (link R)', 'chassis.idler.armEnd', null)
-    + '</div>');
+    + '</div>';
+}
 
-  (['R', 'L'] as Side[]).forEach((side) => {
-    const S = side === 'R' ? 'Right' : 'Left';
-    const c = `corners.${side}`;
-    const spindle = ctx.front.corners[side].spindle;
+function chassisPickupsBody(ctx: Ctx, side: Side): string {
+  return '<div class="cg2">'
+    + pointField(ctx, 'Lower arm — front pivot', `chassis.sides.${side}.lowerFront`, side)
+    + pointField(ctx, 'Lower arm — rear pivot', `chassis.sides.${side}.lowerRear`, side)
+    + pointField(ctx, 'Upper heim mount — front', `chassis.sides.${side}.upperFront`, side)
+    + pointField(ctx, 'Upper heim mount — rear', `chassis.sides.${side}.upperRear`, side)
+    + '</div>';
+}
 
-    h += card(`${S} — chassis pickups`, `wide ${side}`,
-      '<div class="cg2">'
-      + pointField(ctx, 'Lower arm — front pivot', `chassis.sides.${side}.lowerFront`, side)
-      + pointField(ctx, 'Lower arm — rear pivot', `chassis.sides.${side}.lowerRear`, side)
-      + pointField(ctx, 'Upper heim mount — front', `chassis.sides.${side}.upperFront`, side)
-      + pointField(ctx, 'Upper heim mount — rear', `chassis.sides.${side}.upperRear`, side)
-      + '</div>');
+function controlArmsBody(ctx: Ctx, side: Side): string {
+  const c = `corners.${side}`;
+  return '<div class="cardhelp">Ball joints in car coordinates (solved at ride).'
+    + ' Edit x/out/z or ⌖ pick from the scan — the arm spec (pivot-axis'
+    + ' radius, heim leg lengths) is derived from the chassis pickups + BJ.'
+    + ' Front/rear heims adjust independently in the Adjustments panel.</div>'
+    + '<div class="cg2">'
+    + bjRow(ctx, 'Lower ball joint', side, 'lower')
+    + bjRow(ctx, 'Upper ball joint', side, 'upper')
+    + '<div class="numrow">'
+    + numField(ctx, 'Lower BJ drop', 'front', `${c}.lowerArm.bjDrop`)
+    + numField(ctx, 'Front heim TPI', 'front', `${c}.upperArm.legFront.heimPitchTPI`, 1)
+    + numField(ctx, 'Rear heim TPI', 'front', `${c}.upperArm.legRear.heimPitchTPI`, 1)
+    + '</div></div>'
+    + `<div class="leglen" id="armDerived${side}">${armDerivedText(ctx, side)}</div>`;
+}
 
-    h += card(`${S} — control arms`, `wide ${side}`,
-      '<div class="cardhelp">Ball joints in car coordinates (solved at ride).'
-      + ' Edit x/out/z or ⌖ pick from the scan — the arm spec (pivot-axis'
-      + ' radius, heim leg lengths) is derived from the chassis pickups + BJ.'
-      + ' Front/rear heims adjust independently in the Adjustments panel.</div>'
-      + '<div class="cg2">'
-      + bjRow(ctx, 'Lower ball joint', side, 'lower')
-      + bjRow(ctx, 'Upper ball joint', side, 'upper')
-      + '<div class="numrow">'
-      + numField(ctx, 'Lower BJ drop', 'front', `${c}.lowerArm.bjDrop`)
-      + numField(ctx, 'Front heim TPI', 'front', `${c}.upperArm.legFront.heimPitchTPI`, 1)
-      + numField(ctx, 'Rear heim TPI', 'front', `${c}.upperArm.legRear.heimPitchTPI`, 1)
-      + '</div></div>'
-      + `<div class="leglen" id="armDerived${side}">${armDerivedText(ctx, side)}</div>`);
+function shockBody(ctx: Ctx, side: Side): string {
+  const c = `corners.${side}`;
+  return '<div class="cardhelp">Upper mount on the frame, lower seat on the arm — these'
+    + ' set the motion ratio (dShock/dWheel in the HUD). Spring omitted for now.</div>'
+    + pointField(ctx, 'Chassis mount (frame)', `chassis.sides.${side}.shockMountUpper`, side)
+    + '<div class="numrow">'
+    + numField(ctx, 'Seat on arm — axial', 'front', `${c}.lowerArm.shockSeat.axial`, 0.05, 'shockseat', side)
+    + numField(ctx, 'Seat radial', 'front', `${c}.lowerArm.shockSeat.radial`)
+    + numField(ctx, 'Seat drop', 'front', `${c}.lowerArm.shockSeat.drop`)
+    + '</div>';
+}
 
-    h += card(`${S} — shock (motion ratio)`, side,
-      '<div class="cardhelp">Upper mount on the frame, lower seat on the arm — these'
-      + ' set the motion ratio (dShock/dWheel in the HUD). Spring omitted for now.</div>'
-      + pointField(ctx, 'Chassis mount (frame)', `chassis.sides.${side}.shockMountUpper`, side)
-      + '<div class="numrow">'
-      + numField(ctx, 'Seat on arm — axial', 'front', `${c}.lowerArm.shockSeat.axial`, 0.05, 'shockseat', side)
-      + numField(ctx, 'Seat radial', 'front', `${c}.lowerArm.shockSeat.radial`)
-      + numField(ctx, 'Seat drop', 'front', `${c}.lowerArm.shockSeat.drop`)
-      + '</div>');
+function spindleBody(ctx: Ctx, side: Side): string {
+  const c = `corners.${side}`;
+  const spindle = ctx.front.corners[side].spindle;
+  const calBadge = spindle.calibrated?.pinDir
+    ? `<div class="calbadge">✓ calibrated pin stored — overrides card angles <button data-clearcal="${side}">clear</button></div>`
+    : '<div class="calbadge" style="color:var(--bad)">pin not calibrated — card angles in use (or blank)</div>';
+  const scanBadge = spindle.calibrated?.hubFaceLocal || spindle.calibrated?.wcLocal
+    ? '<div class="calbadge">✓ hub &amp; tie-rod positions measured</div>' : '';
+  return calBadge + scanBadge
+    + '<div class="btns" style="margin-bottom:10px">'
+    + `<button class="b primary" data-picknum="spindle" data-path="" data-side="${side}" data-picklabel="spindle">⌖ Measure spindle from scan (4 clicks)</button>`
+    + '</div>'
+    + '<div class="cardhelp">LBJ → UBJ → tie-rod outer → hub face. Fills the'
+    + ' spindle height + hub/tie-rod positions, and the arm lengths & tie rod'
+    + ' as a bonus. Pin ANGLES still come from camber/toe calibration.</div>'
+    + '<div class="cg2"><div class="numrow">'
+    + numField(ctx, 'Height LBJ→UBJ', 'front', `${c}.spindle.height`, 0.01, 'two', side)
+    + numField(ctx, 'Pin boss above LBJ', 'front', `${c}.spindle.pin.heightAboveLBJ`, 0.05, 'two', side)
+    + numField(ctx, 'Pin snout length', 'front', `${c}.spindle.pin.snoutLength`, 0.05, 'two', side)
+    + '</div><div class="numrow">'
+    + numField(ctx, 'Pin inclination °', 'front', `${c}.spindle.pin.inclinationDeg`, 0.1)
+    + numField(ctx, 'Pin sweep °', 'front', `${c}.spindle.pin.sweepDeg`, 0.1)
+    + '</div><div class="numrow">'
+    + numField(ctx, 'Str. arm length', 'front', `${c}.spindle.steeringArm.length`, 0.05)
+    + numField(ctx, 'Str. arm drop', 'front', `${c}.spindle.steeringArm.drop`, 0.05)
+    + numField(ctx, 'Str. arm sweep °', 'front', `${c}.spindle.steeringArm.sweepDeg`, 0.5)
+    + `<div class="nf"><label>Arm side</label><select data-root="front" data-path="${c}.spindle.steeringArm.side" data-sel="1">`
+    + `<option value="front"${spindle.steeringArm.side === 'front' ? ' selected' : ''}>front</option>`
+    + `<option value="rear"${spindle.steeringArm.side === 'rear' ? ' selected' : ''}>rear</option>`
+    + '</select></div></div>'
+    + bjRow(ctx, 'Rotor / hub face center', side, 'hub')
+    + '</div>';
+}
 
-    const calBadge = spindle.calibrated?.pinDir
-      ? `<div class="calbadge">✓ calibrated pin stored — overrides card angles <button data-clearcal="${side}">clear</button></div>`
-      : '<div class="calbadge" style="color:var(--bad)">pin not calibrated — card angles in use (or blank)</div>';
-    const scanBadge = spindle.calibrated?.hubFaceLocal || spindle.calibrated?.wcLocal
-      ? '<div class="calbadge">✓ hub &amp; tie-rod positions measured</div>' : '';
-    h += card(`${S} — spindle (GM long, 3-piece)`, `wide ${side}`,
-      calBadge + scanBadge
-      + '<div class="btns" style="margin-bottom:10px">'
-      + `<button class="b primary" data-picknum="spindle" data-path="" data-side="${side}" data-picklabel="spindle">⌖ Measure spindle from scan (4 clicks)</button>`
-      + '</div>'
-      + '<div class="cardhelp">LBJ → UBJ → tie-rod outer → hub face. Fills the'
-      + ' spindle height + hub/tie-rod positions, and the arm lengths & tie rod'
-      + ' as a bonus. Pin ANGLES still come from camber/toe calibration.</div>'
-      + '<div class="cg2"><div class="numrow">'
-      + numField(ctx, 'Height LBJ→UBJ', 'front', `${c}.spindle.height`, 0.01, 'two', side)
-      + numField(ctx, 'Pin boss above LBJ', 'front', `${c}.spindle.pin.heightAboveLBJ`, 0.05, 'two', side)
-      + numField(ctx, 'Pin snout length', 'front', `${c}.spindle.pin.snoutLength`, 0.05, 'two', side)
-      + '</div><div class="numrow">'
-      + numField(ctx, 'Pin inclination °', 'front', `${c}.spindle.pin.inclinationDeg`, 0.1)
-      + numField(ctx, 'Pin sweep °', 'front', `${c}.spindle.pin.sweepDeg`, 0.1)
-      + '</div><div class="numrow">'
-      + numField(ctx, 'Str. arm length', 'front', `${c}.spindle.steeringArm.length`, 0.05)
-      + numField(ctx, 'Str. arm drop', 'front', `${c}.spindle.steeringArm.drop`, 0.05)
-      + numField(ctx, 'Str. arm sweep °', 'front', `${c}.spindle.steeringArm.sweepDeg`, 0.5)
-      + `<div class="nf"><label>Arm side</label><select data-root="front" data-path="${c}.spindle.steeringArm.side" data-sel="1">`
-      + `<option value="front"${spindle.steeringArm.side === 'front' ? ' selected' : ''}>front</option>`
-      + `<option value="rear"${spindle.steeringArm.side === 'rear' ? ' selected' : ''}>rear</option>`
-      + '</select></div></div>'
-      + bjRow(ctx, 'Rotor / hub face center', side, 'hub')
-      + '</div>');
+function tieRodWheelBody(ctx: Ctx, side: Side): string {
+  const c = `corners.${side}`;
+  return '<div class="numrow">'
+    + numField(ctx, 'Tie rod base len', 'front', `${c}.tieRod.baseLength`, 0.01, 'tro', side)
+    + numField(ctx, 'Sleeve TPI', 'front', `${c}.tieRod.sleevePitchTPI`, 1)
+    + numField(ctx, 'Sleeve ends (1/2)', 'front', `${c}.tieRod.endsThreaded`, 1)
+    + numField(ctx, 'Ride target WC z', 'setup', `corners.${side}.rideTargetWCz`, 0.05)
+    + '</div><div class="numrow">'
+    + numField(ctx, 'Tire radius (loaded)', 'front', `${c}.wheel.radius`, 0.25)
+    + numField(ctx, 'Tire width', 'front', `${c}.wheel.width`, 0.25)
+    + numField(ctx, 'Wheel offset→hub', 'front', `${c}.wheel.offsetToHubFace`, 0.05)
+    + '</div>';
+}
 
-    h += card(`${S} — tie rod & wheel`, side,
-      '<div class="numrow">'
-      + numField(ctx, 'Tie rod base len', 'front', `${c}.tieRod.baseLength`, 0.01, 'tro', side)
-      + numField(ctx, 'Sleeve TPI', 'front', `${c}.tieRod.sleevePitchTPI`, 1)
-      + numField(ctx, 'Sleeve ends (1/2)', 'front', `${c}.tieRod.endsThreaded`, 1)
-      + numField(ctx, 'Ride target WC z', 'setup', `corners.${side}.rideTargetWCz`, 0.05)
-      + '</div><div class="numrow">'
-      + numField(ctx, 'Tire radius (loaded)', 'front', `${c}.wheel.radius`, 0.25)
-      + numField(ctx, 'Tire width', 'front', `${c}.wheel.width`, 0.25)
-      + numField(ctx, 'Wheel offset→hub', 'front', `${c}.wheel.offsetToHubFace`, 0.05)
-      + '</div>');
-  });
+/* ============================================================
+ *  Per-part editor renderers (M2+). Each returns a self-contained
+ *  <section> targeted at the #partEditor mount.
+ * ============================================================ */
 
-  host.innerHTML = h;
+function sectionHeader(title: string, side?: Side): string {
+  const cls = side ? (side === 'R' ? 'R' : 'L') : '';
+  const suffix = side ? ` — ${side === 'R' ? 'RIGHT' : 'LEFT'}` : '';
+  return `<div class="editorHead ${cls}"><h3>${esc(title)}${suffix}</h3></div>`;
+}
 
+export function renderChassisEditor(ctx: Ctx): string {
+  return sectionHeader('Chassis')
+    + '<div class="editorBody">'
+    + guideButtonHTML('chassis', null)
+    + '<div class="cardhelp">The frame itself: wheelbase and how high the frame'
+    + ' sits (raise/lower on the jack). Pickups below are where the arms bolt on.</div>'
+    + '<div class="numrow">'
+    + numField(ctx, 'Wheelbase', 'front', 'chassis.wheelbase', 0.5)
+    + numField(ctx, 'Frame raise (in)', 'setup', 'frameRaise', 0.1)
+    + '</div>'
+    + '<h5 class="subhead">Chassis pickups — LEFT</h5>' + chassisPickupsBody(ctx, 'L')
+    + '<h5 class="subhead">Chassis pickups — RIGHT</h5>' + chassisPickupsBody(ctx, 'R')
+    + '</div>';
+}
+
+export function renderSteeringLinkageEditor(ctx: Ctx): string {
+  // Default the tie-rod inners to their arm ends so v1 saves still render
+  // (they're modeled as the same point historically).
+  const sb = ctx.front.chassis.steeringBox;
+  const idl = ctx.front.chassis.idler;
+  if (!sb.tieRodInner) sb.tieRodInner = [...sb.pitmanEnd] as T3;
+  if (!idl.tieRodInner) idl.tieRodInner = [...idl.armEnd] as T3;
+  return sectionHeader('Steering linkage')
+    + '<div class="editorBody">'
+    + guideButtonHTML('steering', null)
+    + '<div class="cardhelp"><b>Pivots + arm ends</b> — vertical-axis taper'
+    + ' joints where the pitman/idler arms bolt to the center link. The 4-bar'
+    + ' rotates about these on steering input.</div>'
+    + '<div class="numrow">'
+    + numField(ctx, 'Toe gauge dia', 'setup', 'toeGaugeDia', 0.5)
+    + '</div><div class="cg2">'
+    + pointField(ctx, 'Pitman pivot (box output)', 'chassis.steeringBox.pivot', null)
+    + pointField(ctx, 'Pitman arm end (link end)', 'chassis.steeringBox.pitmanEnd', null)
+    + pointField(ctx, 'Idler pivot', 'chassis.idler.pivot', null)
+    + pointField(ctx, 'Idler arm end (link end)', 'chassis.idler.armEnd', null)
+    + '</div>'
+    + '<div class="cardhelp" style="margin-top:12px"><b>Tie-rod inner joints</b>'
+    + ' — SEPARATE fore/aft-axis taper joints where each tie rod attaches to'
+    + ' the center link. Usually a few inches inboard of the arm end. Leave equal'
+    + ' to the arm end if your linkage has the tie rod bolted right at the arm'
+    + ' end (rare).</div>'
+    + '<div class="cg2">'
+    + pointField(ctx, 'Tie-rod inner (pitman side)', 'chassis.steeringBox.tieRodInner', null)
+    + pointField(ctx, 'Tie-rod inner (idler side)', 'chassis.idler.tieRodInner', null)
+    + '</div></div>';
+}
+
+export function renderLCAEditor(ctx: Ctx, side: Side): string {
+  const c = `corners.${side}`;
+  return sectionHeader('Lower control arm', side)
+    + '<div class="editorBody">'
+    + guideButtonHTML('lca', side)
+    + '<div class="cardhelp">Lower chassis pickups define the pivot axis. The'
+    + ' lower ball joint sets the arm radius + axial position — edit BJ x/out/z'
+    + ' or ⌖ pick from the scan.</div>'
+    + '<h5 class="subhead">Chassis pickups (lower)</h5>'
+    + '<div class="cg2">'
+    + pointField(ctx, 'Lower arm — front pivot', `chassis.sides.${side}.lowerFront`, side)
+    + pointField(ctx, 'Lower arm — rear pivot', `chassis.sides.${side}.lowerRear`, side)
+    + '</div>'
+    + '<h5 class="subhead">Ball joint</h5>'
+    + bjRow(ctx, 'Lower ball joint', side, 'lower')
+    + '<div class="numrow">'
+    + numField(ctx, 'Lower BJ drop', 'front', `${c}.lowerArm.bjDrop`)
+    + '</div>'
+    + `<div class="leglen" id="armDerived${side}">${armDerivedText(ctx, side)}</div>`
+    + '</div>';
+}
+
+export function renderUCAEditor(ctx: Ctx, side: Side): string {
+  const c = `corners.${side}`;
+  return sectionHeader('Upper control arm', side)
+    + '<div class="editorBody">'
+    + guideButtonHTML('uca', side)
+    + '<div class="cardhelp">Upper heim mounts on the frame; the ball joint'
+    + ' + heim TPI derive the leg lengths. Adjuster turns live in Tune → Adjustments.</div>'
+    + '<h5 class="subhead">Chassis pickups (upper)</h5>'
+    + '<div class="cg2">'
+    + pointField(ctx, 'Upper heim mount — front', `chassis.sides.${side}.upperFront`, side)
+    + pointField(ctx, 'Upper heim mount — rear', `chassis.sides.${side}.upperRear`, side)
+    + '</div>'
+    + '<h5 class="subhead">Ball joint</h5>'
+    + bjRow(ctx, 'Upper ball joint', side, 'upper')
+    + '<div class="numrow">'
+    + numField(ctx, 'Front heim TPI', 'front', `${c}.upperArm.legFront.heimPitchTPI`, 1)
+    + numField(ctx, 'Rear heim TPI', 'front', `${c}.upperArm.legRear.heimPitchTPI`, 1)
+    + '</div>'
+    + `<div class="leglen" id="armDerived${side}">${armDerivedText(ctx, side)}</div>`
+    + '</div>';
+}
+
+export function renderSpindleEditor(ctx: Ctx, side: Side): string {
+  return sectionHeader('Spindle (GM long, 3-piece)', side)
+    + '<div class="editorBody">' + guideButtonHTML('spindle', side) + spindleBody(ctx, side) + '</div>';
+}
+
+export function renderTieRodEditor(ctx: Ctx, side: Side): string {
+  const c = `corners.${side}`;
+  return sectionHeader('Tie rod', side)
+    + '<div class="editorBody">'
+    + guideButtonHTML('tieRod', side)
+    + '<div class="numrow">'
+    + numField(ctx, 'Tie rod base len', 'front', `${c}.tieRod.baseLength`, 0.01, 'tro', side)
+    + numField(ctx, 'Sleeve TPI', 'front', `${c}.tieRod.sleevePitchTPI`, 1)
+    + numField(ctx, 'Sleeve ends (1/2)', 'front', `${c}.tieRod.endsThreaded`, 1)
+    + '</div></div>';
+}
+
+export function renderShockEditor(ctx: Ctx, side: Side): string {
+  return sectionHeader('Shock', side)
+    + '<div class="editorBody">' + guideButtonHTML('shock', side) + shockBody(ctx, side) + '</div>';
+}
+
+export function renderWheelEditor(ctx: Ctx, side: Side): string {
+  const c = `corners.${side}`;
+  return sectionHeader('Wheel & tire', side)
+    + '<div class="editorBody">'
+    + guideButtonHTML('wheel', side)
+    + '<div class="numrow">'
+    + numField(ctx, 'Tire radius (loaded)', 'front', `${c}.wheel.radius`, 0.25)
+    + numField(ctx, 'Tire width', 'front', `${c}.wheel.width`, 0.25)
+    + numField(ctx, 'Wheel offset→hub', 'front', `${c}.wheel.offsetToHubFace`, 0.05)
+    + numField(ctx, 'Ride target WC z', 'setup', `corners.${side}.rideTargetWCz`, 0.05)
+    + '</div></div>';
+}
+
+interface EditorCallbacks {
+  onChange: (structural?: boolean) => void;
+  onPick?: (req: PickRequest) => void;
+  onFocusPoint?: (path: string | null) => void;
+  /** "Guide me through this part" — runs a mini wizard covering only that
+   *  part's picks. Only relevant when a scan is loaded. */
+  onPartGuide?: (partId: PartId, side: Side | null) => void;
+}
+
+/** Which pick recipes each part uses in its guided flow. Empty = no guide. */
+const PART_GUIDE_STEPS: Record<PartId, string[]> = {
+  chassis: ['lowerFront', 'lowerRear', 'upperFront', 'upperRear'],
+  steering: ['pivot', 'pitmanEnd', 'idlerPivot', 'idlerEnd', 'triPit', 'triIdl'],
+  lca: ['lowerFront', 'lowerRear', 'LBJ'],
+  uca: ['upperFront', 'upperRear', 'UBJ'],
+  spindle: ['spindle4'],       // the existing 4-click recipe
+  tieRod: ['TRO'],
+  shock: ['shockMount', 'shockSeat'],
+  wheel: ['hubFace'],
+};
+
+function guideButtonHTML(partId: PartId, side: Side | null): string {
+  if (!PART_GUIDE_STEPS[partId]?.length) return '';
+  const n = PART_GUIDE_STEPS[partId].length;
+  return `<div class="pickBar"><button class="b primary" data-partguide="${partId}" data-side="${side ?? ''}">`
+    + `⌖ Guide me through this part (${n} pick${n === 1 ? '' : 's'})</button></div>`;
+}
+
+/** Render one part's editor into `host` and wire its inputs. */
+export function renderPartEditor(
+  host: HTMLElement, ctx: Ctx, partId: PartId | null, side: Side, cbs: EditorCallbacks,
+): void {
+  if (!partId) { host.innerHTML = '<div class="editorEmpty">Pick a part from the list to edit.</div>'; return; }
+  let html = '';
+  switch (partId) {
+    case 'chassis': html = renderChassisEditor(ctx); break;
+    case 'steering': html = renderSteeringLinkageEditor(ctx); break;
+    case 'lca': html = renderLCAEditor(ctx, side); break;
+    case 'uca': html = renderUCAEditor(ctx, side); break;
+    case 'spindle': html = renderSpindleEditor(ctx, side); break;
+    case 'tieRod': html = renderTieRodEditor(ctx, side); break;
+    case 'shock': html = renderShockEditor(ctx, side); break;
+    case 'wheel': html = renderWheelEditor(ctx, side); break;
+  }
+  host.innerHTML = html;
+  wireEditorInputs(host, ctx, cbs);
+}
+
+/** Wire every input/select/pick button inside `host` to `ctx`.
+ *  Behaves identically for the legacy full form and for a single-part editor. */
+export function wireEditorInputs(
+  host: HTMLElement, ctx: Ctx, cbs: EditorCallbacks,
+): void {
+  const { onChange, onPick, onFocusPoint } = cbs;
   host.querySelectorAll<HTMLInputElement>('input[data-path]').forEach((inp) => {
     // point fields: live crosshair in the 3D view while focused, and
     // Shift+Arrow = 0.01" fine nudge (plain arrows step 0.1")
@@ -406,6 +634,41 @@ export function buildPartsForm(
       onChange(true);
     });
   });
+  host.querySelectorAll<HTMLButtonElement>('button[data-partguide]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      cbs.onPartGuide?.(
+        btn.dataset.partguide as PartId,
+        (btn.dataset.side as Side) || null,
+      );
+    });
+  });
+}
+
+/** onChange(structural): structural=true means the form layout itself must
+ *  re-render (badges, pin creation) — plain value edits must NOT re-render
+ *  or the focused field loses focus mid-nudge.
+ *
+ *  Legacy shim: renders the full horizontal card row exactly as before.
+ *  M2 will replace this call site with renderPartEditor + a nav. */
+export function buildPartsForm(
+  host: HTMLElement, ctx: Ctx, onChange: (structural?: boolean) => void,
+  onPick?: (req: PickRequest) => void,
+  onFocusPoint?: (path: string | null) => void,
+): void {
+  let h = '';
+  h += card('Vehicle & steering linkage', 'wide', chassisSteeringBody(ctx));
+
+  (['R', 'L'] as Side[]).forEach((side) => {
+    const S = side === 'R' ? 'Right' : 'Left';
+    h += card(`${S} — chassis pickups`, `wide ${side}`, chassisPickupsBody(ctx, side));
+    h += card(`${S} — control arms`, `wide ${side}`, controlArmsBody(ctx, side));
+    h += card(`${S} — shock (motion ratio)`, side, shockBody(ctx, side));
+    h += card(`${S} — spindle (GM long, 3-piece)`, `wide ${side}`, spindleBody(ctx, side));
+    h += card(`${S} — tie rod & wheel`, side, tieRodWheelBody(ctx, side));
+  });
+
+  host.innerHTML = h;
+  wireEditorInputs(host, ctx, { onChange, onPick, onFocusPoint });
 }
 
 function ensurePin(ctx: Ctx, path: string): void {

@@ -16,9 +16,16 @@ import { Scene3D } from './ui/scene3d';
 import { chartMulti } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
 import {
-  BJKind, PickRequest, buildPartsForm, getFrontPoint, getSolvedBJ, refreshBJFields,
-  setFrontPoint, setFrontValue,
+  BJKind, PartId, PART_HAS_SIDE, PickRequest, getFrontPoint, getSolvedBJ, refreshBJFields,
+  renderPartEditor, setFrontPoint, setFrontValue,
 } from './ui/panels';
+import { UIState, defaultUIState, loadUIState, saveUIState } from './ui/uiState';
+import type { Bundle, LapFrames, SensorMapping } from './ui/telemetry/bundle';
+import { resolveMapping } from './ui/telemetry/mapping';
+import {
+  ReplayUIState, buildReplayRailHTML, renderReplayRail, tickReplayUI, wireReplayRail,
+} from './ui/telemetry/replayUI';
+import { Engine, createEngine } from './ui/telemetry/replayEngine';
 import { armPickLengths } from './state/setup';
 import {
   AssemblyError, cornerDiagnostics, fitUpperLegsToSpindle, kingpinFrame, toKingpinLocal,
@@ -106,7 +113,7 @@ function offerArmFix(err: AssemblyError): boolean {
       } catch { /* keep current */ }
     }
     fixingArms = true;
-    rebuild(); rebuildForm(); syncAdjInputs();
+    rebuild(); rebuildEditor(); syncAdjInputs();
     fixingArms = false;
     return true;
   }
@@ -122,7 +129,7 @@ function offerArmFix(err: AssemblyError): boolean {
   front.corners[side].upperArm.legFront.baseLength = r3(front.corners[side].upperArm.legFront.baseLength + d);
   front.corners[side].upperArm.legRear.baseLength = r3(front.corners[side].upperArm.legRear.baseLength + d);
   fixingArms = true;   // if something ELSE still fails, show THAT error honestly
-  rebuild(); rebuildForm(); syncAdjInputs();
+  rebuild(); rebuildEditor(); syncAdjInputs();
   fixingArms = false;
   if ($('asmErr').style.display !== 'block') {
     $('asmErr').textContent =
@@ -295,12 +302,18 @@ function drawCharts(m: FrontState): void {
     return cell(CY, `L ${fmt(curL, digits)}${unit}`, dL) + ' · ' + cell(OR, `R ${fmt(curR, digits)}${unit}`, dR);
   };
   $('cCamb').innerHTML = pair(m.cL.camber, m.cR.camber, bs?.cambL ?? null, bs?.cambR ?? null, 2, '°');
+  const toeRin = sweep.toeR.map((d) => toeInches(d, gd));
+  const toeLin = sweep.toeL.map((d) => toeInches(d, gd));
+  const bsRateR = gainAt(sweep, toeRin, m.wtR);
+  const bsRateL = gainAt(sweep, toeLin, m.wtL);
   $('cToe').innerHTML = pair(
     toeInches(m.cL.toe, gd), toeInches(m.cR.toe, gd),
     bs ? bs.toeL.map((d) => toeInches(d, gd)) : null,
     bs ? bs.toeR.map((d) => toeInches(d, gd)) : null,
     3, '"',
-  );
+  ) + `<span style="color:var(--dim);margin-left:8px">slope: `
+    + `<span style="color:${CY}">L ${fmt(bsRateL, 3)}</span> · `
+    + `<span style="color:${OR}">R ${fmt(bsRateR, 3)}</span> "/in</span>`;
   $('cCast').innerHTML = pair(m.cL.casterLive, m.cR.casterLive, bs?.castL ?? null, bs?.castR ?? null, 2, '°');
   const rcCur = m.rc.rc ? m.rc.rc[1] : NaN;
   const rcD = showBase && isFinite(rcCur)
@@ -310,21 +323,22 @@ function drawCharts(m: FrontState): void {
 }
 
 /* ---------------- IDE-style splitters ---------------- */
-interface Layout { rightW: number; bottomH: number; ctrlF: number }
-const LAYOUT_KEY = 'clrLayout3';
+interface Layout { leftW: number; rightW: number; ctrlF: number }
+const LAYOUT_KEY = 'clrLayout4';
 const layout: Layout = {
-  rightW: 760, bottomH: 400, ctrlF: 0.5,
+  leftW: 340, rightW: 420, ctrlF: 0.5,
   ...JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '{}'),
 };
 function applyLayout(): void {
   const app = $('app');
+  app.style.setProperty('--leftW', layout.leftW + 'px');
   app.style.setProperty('--rightW', layout.rightW + 'px');
-  app.style.setProperty('--bottomH', layout.bottomH + 'px');
   $('paneControls').style.flexGrow = String(Math.round(layout.ctrlF * 100));
   $('paneCharts').style.flexGrow = String(Math.round((1 - layout.ctrlF) * 100));
 }
 function wireSplitter(id: string, onMove: (e: PointerEvent) => void): void {
-  const el = $(id);
+  const el = document.getElementById(id);
+  if (!el) return;
   el.addEventListener('pointerdown', (e) => {
     el.setPointerCapture(e.pointerId);
     el.classList.add('drag');
@@ -340,11 +354,11 @@ function wireSplitter(id: string, onMove: (e: PointerEvent) => void): void {
     e.preventDefault();
   });
 }
-wireSplitter('vsplit', (e) => {
-  layout.rightW = Math.min(Math.max(window.innerWidth - e.clientX, 300), window.innerWidth * 0.55);
+wireSplitter('lsplit', (e) => {
+  layout.leftW = Math.min(Math.max(e.clientX, 260), window.innerWidth * 0.5);
 });
-wireSplitter('hsplit', (e) => {
-  layout.bottomH = Math.min(Math.max(window.innerHeight - e.clientY, 120), window.innerHeight * 0.65);
+wireSplitter('vsplit', (e) => {
+  layout.rightW = Math.min(Math.max(window.innerWidth - e.clientX, 300), window.innerWidth * 0.5);
 });
 wireSplitter('rsplit', (e) => {
   const r = $('right').getBoundingClientRect();
@@ -448,15 +462,19 @@ document.querySelectorAll<HTMLInputElement>('input[data-cal]').forEach((inp) => 
 });
 $('calBtn').addEventListener('click', () => {
   try {
+    // Convention: LEFT wheel is the alignment reference — always calibrate it
+    // straight (toe = 0). Any prior L toeIn in the setup is ignored so
+    // total toe = R toe, matching how the user aligns the real car.
+    setup.measured.L.toeIn = 0;
     (['R', 'L'] as Side[]).forEach((s) => {
       front.corners[s].spindle = calibrateSpindle(
         front, setup, s, setup.measured[s].camberDeg, setup.measured[s].toeIn,
       );
     });
     $('calMsg').textContent = '';
-    rebuild(); rebuildForm();
+    rebuild(); rebuildEditor();
     $('calMsg').style.color = 'var(--good)';
-    $('calMsg').textContent = 'spindles calibrated — pin stored on the part';
+    $('calMsg').textContent = 'spindles calibrated — L straight, R at your measured toe';
   } catch (err) {
     $('calMsg').style.color = 'var(--bad)';
     $('calMsg').textContent = (err as Error).message;
@@ -526,19 +544,26 @@ function endPick(): void {
 let downAt: { x: number; y: number } | null = null;
 scene.canvas.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
 scene.canvas.addEventListener('pointerup', (e) => {
-  if (!pickCb || !downAt) return;
+  if (!downAt) return;
   if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6) return;  // was an orbit drag
   const r = scene.canvas.getBoundingClientRect();
   const ndc = new Vector2(
     ((e.clientX - r.left) / r.width) * 2 - 1,
     -((e.clientY - r.top) / r.height) * 2 + 1,
   );
-  const p = scan.pick(ndc, scene.cam);
-  if (!p) { $('pickMsg').textContent = '⌖ missed the scan — click again  (Esc cancels)'; return; }
-  const cb = pickCb;
-  pickCb = null;
-  cb(p);           // may chain into the next wizard step via startPick
-  if (!pickCb) endPick();
+  if (pickCb) {
+    // scan pick in progress: route the click to the scan mesh
+    const p = scan.pick(ndc, scene.cam);
+    if (!p) { $('pickMsg').textContent = '⌖ missed the scan — click again  (Esc cancels)'; return; }
+    const cb = pickCb;
+    pickCb = null;
+    cb(p);           // may chain into the next wizard step via startPick
+    if (!pickCb) endPick();
+    return;
+  }
+  // no pick queued → try to select a part by clicking its mesh in the scene
+  const hit = scene.pickPart({ x: ndc.x, y: ndc.y });
+  if (hit) selectPartFromScene(hit.part, hit.side ?? uiState.side);
 });
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && pickCb) {
@@ -605,7 +630,7 @@ function alignWizard(): void {
         + (res.swappedLR ? ' · your L/R picks were mirrored — auto-corrected' : '')
         + ` · ${scan.info}`;
       scene.resetView();
-      rebuildForm();
+      rebuildEditor();
       rebuild();
     }
   };
@@ -681,7 +706,7 @@ function pickDone(p: Vector3): void {
   scan.addMarker(p, 0x46d18a);
   setTimeout(() => { scan.clearMarkers(); scene.render(); }, 2500);
   rebuild();
-  rebuildForm();
+  rebuildEditor();
 }
 
 /** All recipes measure rigid part geometry, so a full-droop scan is exact —
@@ -809,6 +834,98 @@ function handlePickReq(req: PickRequest): void {
   }
 }
 
+/** "Guide me through this part" — mini wizard that runs just the picks
+ *  relevant to one part, chained via startPick. Falls back cleanly if a
+ *  full-car wizard is already in progress. */
+function partWizard(partId: PartId, side: Side | null): void {
+  if (wizardRestore) { scanNote('a full-car wizard is running — cancel it first (Esc)'); return; }
+  if (!scan.loaded) { scanNote('load a 3D scan first (scan section)'); return; }
+  if (!scan.aligned) { scanNote('align the scan first — Measure whole car or Re-align'); return; }
+  const s: Side = side ?? uiState.side;
+  const picks: Array<() => void> = [];
+  const v2t = (pt: Vector3): [number, number, number] => [r3(pt.x), r3(pt.y), r3(pt.z)];
+  const push = (label: string, apply: (pt: Vector3) => void) => {
+    picks.push(() => startPick(
+      `[${picks.length + 0}/${picks.length + 0}] ${label}`,   // placeholder, replaced below
+      (pt) => {
+        scan.addMarker(pt, 0x46d18a); scene.render();
+        apply(pt);
+        const next = picks.shift();
+        if (next) next();
+        else {
+          rebuild(); rebuildEditor();
+          setTimeout(() => { scan.clearMarkers(); scene.render(); }, 2500);
+        }
+      },
+    ));
+  };
+
+  switch (partId) {
+    case 'chassis':
+      push(`chassis pickup — ${s} LOWER FRONT pivot`, (pt) => setFrontPoint(front, `chassis.sides.${s}.lowerFront`, v2t(pt)));
+      push(`chassis pickup — ${s} LOWER REAR pivot`, (pt) => setFrontPoint(front, `chassis.sides.${s}.lowerRear`, v2t(pt)));
+      push(`chassis pickup — ${s} UPPER FRONT heim`, (pt) => setFrontPoint(front, `chassis.sides.${s}.upperFront`, v2t(pt)));
+      push(`chassis pickup — ${s} UPPER REAR heim`, (pt) => setFrontPoint(front, `chassis.sides.${s}.upperRear`, v2t(pt)));
+      break;
+    case 'steering':
+      push('steering: pitman PIVOT (box output)', (pt) => setFrontPoint(front, 'chassis.steeringBox.pivot', v2t(pt)));
+      push('steering: pitman ARM END on center link (vertical-axis joint)', (pt) => setFrontPoint(front, 'chassis.steeringBox.pitmanEnd', v2t(pt)));
+      push('steering: idler PIVOT', (pt) => setFrontPoint(front, 'chassis.idler.pivot', v2t(pt)));
+      push('steering: idler ARM END on center link (vertical-axis joint)', (pt) => setFrontPoint(front, 'chassis.idler.armEnd', v2t(pt)));
+      push('steering: TIE-ROD INNER — pitman side (fore/aft-axis joint on center link)', (pt) => {
+        if (!front.chassis.steeringBox.tieRodInner) front.chassis.steeringBox.tieRodInner = [0, 0, 0];
+        setFrontPoint(front, 'chassis.steeringBox.tieRodInner', v2t(pt));
+      });
+      push('steering: TIE-ROD INNER — idler side (fore/aft-axis joint on center link)', (pt) => {
+        if (!front.chassis.idler.tieRodInner) front.chassis.idler.tieRodInner = [0, 0, 0];
+        setFrontPoint(front, 'chassis.idler.tieRodInner', v2t(pt));
+      });
+      break;
+    case 'lca':
+      push(`${s} lower FRONT pivot`, (pt) => setFrontPoint(front, `chassis.sides.${s}.lowerFront`, v2t(pt)));
+      push(`${s} lower REAR pivot`, (pt) => setFrontPoint(front, `chassis.sides.${s}.lowerRear`, v2t(pt)));
+      push(`${s} LOWER ball joint center`, (pt) => {
+        const c = front.corners[s];
+        const { axial, radial } = armPickLengths(front.chassis.sides[s], [pt.x, pt.y, pt.z], c.lowerArm.bjDrop);
+        c.lowerArm.bjAxial = r3(axial);
+        c.lowerArm.length = r3(radial);
+      });
+      break;
+    case 'uca':
+      push(`${s} upper FRONT heim mount`, (pt) => setFrontPoint(front, `chassis.sides.${s}.upperFront`, v2t(pt)));
+      push(`${s} upper REAR heim mount`, (pt) => setFrontPoint(front, `chassis.sides.${s}.upperRear`, v2t(pt)));
+      push(`${s} UPPER ball joint center`, (pt) => {
+        const c = setup.corners[s];
+        const ua = front.corners[s].upperArm;
+        const cs = front.chassis.sides[s];
+        ua.legFront.baseLength = r3(distTo(cs.upperFront, pt) - c.heimTurnsFront / ua.legFront.heimPitchTPI);
+        ua.legRear.baseLength = r3(distTo(cs.upperRear, pt) - c.heimTurnsRear / ua.legRear.heimPitchTPI);
+      });
+      break;
+    case 'spindle':
+      handlePickReq({ kind: 'spindle', path: '', side: s, label: `${s} spindle 4-click` });
+      return;
+    case 'tieRod':
+      handlePickReq({ kind: 'tro', path: `corners.${s}.tieRod.baseLength`, side: s, label: `${s} tie rod outer` });
+      return;
+    case 'shock':
+      push(`${s} shock CHASSIS mount (frame)`, (pt) => setFrontPoint(front, `chassis.sides.${s}.shockMountUpper`, v2t(pt)));
+      push(`${s} shock LOWER seat on the arm`, (pt) => {
+        const la = front.corners[s].lowerArm;
+        const seat = armPickLengths(front.chassis.sides[s], [pt.x, pt.y, pt.z], la.shockSeat.drop);
+        la.shockSeat.axial = r3(seat.axial);
+        la.shockSeat.radial = r3(seat.radial);
+      });
+      break;
+    case 'wheel':
+      // hub face uses live pose — user should overlay the model onto the scan first
+      handlePickReq({ kind: 'hubface', path: '', side: s, label: `${s} hub face center` });
+      return;
+  }
+  const first = picks.shift();
+  if (first) first();
+}
+
 /** Fold the four spindle picks into the parts: spindle rigid geometry plus
  *  the lower arm, both upper legs, and the tie rod (the same physical points
  *  measure all of them). */
@@ -903,11 +1020,14 @@ function measureWizard(): void {
   }));
 
   // 2) steering linkage — whichever side your box is on; tie rods attach to
-  // the center-link end on their own side by geometry, not by these names
+  // the center-link at their OWN joint (separate from the arm end), routed
+  // by y-sign, not by pitman/idler naming
   pt('steering: pitman PIVOT (steering box output shaft)', 'chassis.steeringBox.pivot');
-  pt('steering: pitman ARM END (where the pitman meets the center link)', 'chassis.steeringBox.pitmanEnd');
+  pt('steering: pitman ARM END (arm ball on the center link — vertical-axis joint)', 'chassis.steeringBox.pitmanEnd');
   pt('steering: idler PIVOT', 'chassis.idler.pivot');
-  pt('steering: idler ARM END (other end of the center link)', 'chassis.idler.armEnd');
+  pt('steering: idler ARM END (arm ball on the center link — vertical-axis joint)', 'chassis.idler.armEnd');
+  pt('steering: tie-rod INNER on the pitman side (fore/aft-axis joint on the center link)', 'chassis.steeringBox.tieRodInner');
+  pt('steering: tie-rod INNER on the idler side (fore/aft-axis joint on the center link)', 'chassis.idler.tieRodInner');
 
   // 3) each corner: chassis mounts, then the spindle stack.
   // Side is DETECTED from where the picks land (y sign) — facing the car,
@@ -990,7 +1110,7 @@ let wizardSkip: () => void = () => {};
 function finishWizard(): void {
   wizardRestore = null;
   endPick();
-  rebuildForm();
+  rebuildEditor();
   syncAdjInputs();
   rebuild();                      // FIRST assembly of the measured car
   if ($('asmErr').style.display !== 'block') {
@@ -1011,7 +1131,7 @@ function cancelWizard(): void {
   front = JSON.parse(wizardRestore) as FrontEnd;
   wizardRestore = null;
   scan.clearMarkers();
-  rebuildForm();
+  rebuildEditor();
   syncAdjInputs();
   rebuild();
 }
@@ -1032,13 +1152,75 @@ function refreshHighlight(): void {
   scene.render();
 }
 
-function rebuildForm(): void {
-  buildPartsForm(
-    $('hpForm'), { front, setup, fa, live: () => lastState },
-    (structural) => { rebuild(); if (structural) rebuildForm(); refreshHighlight(); },
-    handlePickReq,
-    (path) => { focusedPointPath = path; refreshHighlight(); },
-  );
+let uiState: UIState = defaultUIState();
+
+/** Rerender the currently focused part editor into #partEditor and reflect
+ *  nav state in the DOM (button highlights, mode attribute). */
+function rebuildEditor(): void {
+  const host = $('partEditor');
+  if (host) {
+    renderPartEditor(
+      host, { front, setup, fa, live: () => lastState },
+      uiState.selectedPart, uiState.side,
+      {
+        onChange: (structural) => { rebuild(); if (structural) rebuildEditor(); refreshHighlight(); },
+        onPick: handlePickReq,
+        onFocusPoint: (path) => { focusedPointPath = path; refreshHighlight(); },
+        onPartGuide: partWizard,
+      },
+    );
+  }
+  syncNavHighlights();
+}
+
+function syncNavHighlights(): void {
+  document.body.dataset.mode = uiState.mode;
+  $('modeSwitch').querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.uimode === uiState.mode);
+  });
+  $('partList').querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.part === uiState.selectedPart);
+  });
+  const sw = $('sideSwitch');
+  if (sw) {
+    sw.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+      b.classList.toggle('on', b.dataset.uiside === uiState.side);
+    });
+    // hide L/R toggle for parts that don't care
+    const hasSide = uiState.selectedPart ? PART_HAS_SIDE[uiState.selectedPart] : false;
+    sw.parentElement!.style.display = hasSide ? '' : 'none';
+  }
+  // subtle emissive tint on the selected part in the 3D scene
+  const part = uiState.selectedPart;
+  const side = part && PART_HAS_SIDE[part] ? uiState.side : null;
+  scene.setPartHighlight(part, side);
+}
+
+/** Public entry for mode / part / side changes — persists + rerenders. */
+export function selectPart(partId: PartId): void {
+  uiState.selectedPart = partId;
+  saveUIState(uiState);
+  rebuildEditor();
+}
+function setMode(m: 'build' | 'tune' | 'replay'): void {
+  uiState.mode = m;
+  saveUIState(uiState);
+  syncNavHighlights();
+  // charts pane may have been hidden — re-measure canvases now that they're visible.
+  // Applies going into Tune (charts appear) and going into Replay (track map appears).
+  scene.resize(); update();
+}
+function setSide(s: Side): void {
+  uiState.side = s;
+  saveUIState(uiState);
+  rebuildEditor();
+}
+// Called from 3D click handling (M3).
+export function selectPartFromScene(partId: PartId, side: Side): void {
+  uiState.selectedPart = partId;
+  if (PART_HAS_SIDE[partId]) uiState.side = side;
+  saveUIState(uiState);
+  rebuildEditor();
 }
 $('hpMirror').addEventListener('click', () => {
   const mirror = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
@@ -1050,12 +1232,12 @@ $('hpMirror').addEventListener('click', () => {
   front.corners.L = mirror(front.corners.R);   // part specs are side-symmetric
   setup.corners.L = mirror(setup.corners.R);
   setup.measured.L = mirror(setup.measured.R);
-  rebuild(); rebuildForm(); syncAdjInputs();
+  rebuild(); rebuildEditor(); syncAdjInputs();
 });
 $('hpReset').addEventListener('click', () => {
   localStorage.removeItem(AUTOSAVE_KEY);
   ({ front, setup } = defaultState());
-  rebuild(); rebuildForm(); syncAdjInputs(); captureBaseline(); update();
+  rebuild(); rebuildEditor(); syncAdjInputs(); captureBaseline(); update();
 });
 
 /* ---------------- save / load ---------------- */
@@ -1090,7 +1272,7 @@ $('loadFile').addEventListener('change', (e) => {
         if (typeof ui.steer === 'number') ($('steer') as HTMLInputElement).value = String(ui.steer);
       }
       $('hpErr').textContent = '';
-      rebuild(); rebuildForm(); syncAdjInputs(); captureBaseline(); update();
+      rebuild(); rebuildEditor(); syncAdjInputs(); captureBaseline(); update();
     } catch (err) {
       $('hpErr').textContent = 'Load error: ' + (err as Error).message;
     }
@@ -1110,7 +1292,313 @@ try {
     setup = loaded.setup;
   }
 } catch { localStorage.removeItem(AUTOSAVE_KEY); }
-rebuildForm();
+uiState = loadUIState();
+
+/* mode switch / part list / side toggle — clicked buttons update uiState */
+$('modeSwitch').querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+  b.addEventListener('click', () => setMode(b.dataset.uimode as 'build' | 'tune' | 'replay')));
+$('partList').querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+  b.addEventListener('click', () => selectPart(b.dataset.part as PartId)));
+$('sideSwitch').querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+  b.addEventListener('click', () => setSide(b.dataset.uiside as Side)));
+
+/* mobile: floating "☰ Controls" toggles the right dock as a slide-in drawer */
+const toggleDrawer = () => {
+  const open = document.body.dataset.drawer === 'right';
+  if (open) delete document.body.dataset.drawer;
+  else document.body.dataset.drawer = 'right';
+  scene.resize(); update();
+};
+$('drawerToggle').addEventListener('click', toggleDrawer);
+$('drawerBackdrop').addEventListener('click', toggleDrawer);
+
+/* ---------------- replay mode wiring ---------------- */
+const replayState: ReplayUIState = {
+  bundle: null,
+  selectedLap: null,
+  playing: false,
+  currentTSec: 0,
+  lapDurationSec: 0,
+  speedMult: 1,
+  loadingMsg: '',
+  errorMsg: '',
+  rideRefPickSec: null,
+};
+let currentLapFrames: LapFrames | null = null;
+let currentMapping: SensorMapping = {};
+let replayEngine: Engine | null = null;
+const replayCallbacks = {
+  onBundle: (bundle: Bundle) => {
+    replayState.bundle = bundle;
+    currentMapping = resolveMapping(bundle.sensors);
+    replayState.selectedLap = null;
+    currentLapFrames = null;
+    replayEngine?.destroy();
+    replayEngine = null;
+    renderReplayRail($('replayRail'), replayState, replayCallbacks);
+  },
+  onSelectLap: (lapNumber: number) => {
+    if (!replayState.bundle) return;
+    replayState.selectedLap = lapNumber;
+    try {
+      currentLapFrames = replayState.bundle.fetchLap(lapNumber, currentMapping);
+      replayState.currentTSec = 0;
+      replayState.lapDurationSec = currentLapFrames.durationSec;
+      replayState.playing = false;
+      // create the engine with the new lap's duration
+      replayEngine?.destroy();
+      replayEngine = createEngine({
+        durationSec: currentLapFrames.durationSec,
+        onTick: (t) => {
+          replayState.currentTSec = t;
+          applyFrameAt(t);
+          drawLapCharts(t);
+          tickReplayUI($('replayRail'), replayState);
+        },
+        onEnd: () => {
+          replayState.playing = false;
+          tickReplayUI($('replayRail'), replayState);
+        },
+      });
+      replayEngine.setSpeed(replayState.speedMult);
+      computeLapChartData();
+      renderReplayRail($('replayRail'), replayState, replayCallbacks);
+      applyFrameAt(0);
+      drawLapCharts(0);
+    } catch (err) {
+      replayState.errorMsg = `lap ${lapNumber} failed: ${(err as Error).message}`;
+      renderReplayRail($('replayRail'), replayState, replayCallbacks);
+    }
+  },
+  onPlayPause: () => {
+    if (!replayEngine) return;
+    replayEngine.toggle();
+    replayState.playing = replayEngine.isPlaying();
+    tickReplayUI($('replayRail'), replayState);
+  },
+  onSeek: (tSec: number) => {
+    replayState.currentTSec = tSec;
+    if (replayEngine) replayEngine.seek(tSec);
+    else { applyFrameAt(tSec); tickReplayUI($('replayRail'), replayState); }
+    drawLapCharts(tSec);
+  },
+  onSpeedChange: (m: number) => {
+    replayState.speedMult = m;
+    replayEngine?.setSpeed(m);
+  },
+  onMappingChange: (m: SensorMapping) => {
+    currentMapping = m;
+    if (replayState.bundle && replayState.selectedLap !== null) {
+      currentLapFrames = replayState.bundle.fetchLap(replayState.selectedLap, currentMapping);
+      computeLapChartData();
+      applyFrameAt(replayState.currentTSec);
+      drawLapCharts(replayState.currentTSec);
+    }
+  },
+  onPickRideRef: (sessionSec: number) => {
+    if (!replayState.bundle) return;
+    // ±2 s window around the click
+    replayState.bundle.setRideRefFromWindow(sessionSec, 2);
+    replayState.rideRefPickSec = sessionSec;
+    // re-fetch the current lap so shocks are in the new reference frame
+    if (replayState.selectedLap !== null) {
+      currentLapFrames = replayState.bundle.fetchLap(replayState.selectedLap, currentMapping);
+      computeLapChartData();
+      applyFrameAt(replayState.currentTSec);
+      drawLapCharts(replayState.currentTSec);
+    }
+    renderReplayRail($('replayRail'), replayState, replayCallbacks);
+  },
+};
+$('replayRail').innerHTML = buildReplayRailHTML();
+wireReplayRail($('replayRail'), replayState, replayCallbacks);
+
+/** Pre-computed lap-chart data — evenly-sampled solver output over the lap.
+ *  Recomputed on lap select or mapping change; not on every tick (too slow). */
+interface LapChartData {
+  tSec: number[];
+  cambL: number[]; cambR: number[];
+  toeLin: number[]; toeRin: number[];
+  shockL: number[]; shockR: number[];
+  speedMph: number[];
+}
+let lapChartData: LapChartData | null = null;
+const LAP_CHART_SAMPLES = 200;
+
+function computeLapChartData(): void {
+  lapChartData = null;
+  if (!currentLapFrames || !fa) return;
+  const gd = setup.toeGaugeDia;
+  const frames = currentLapFrames;
+  const dur = frames.durationSec;
+  const tSec: number[] = new Array(LAP_CHART_SAMPLES);
+  const cambL: number[] = new Array(LAP_CHART_SAMPLES);
+  const cambR: number[] = new Array(LAP_CHART_SAMPLES);
+  const toeLin: number[] = new Array(LAP_CHART_SAMPLES);
+  const toeRin: number[] = new Array(LAP_CHART_SAMPLES);
+  const sL: number[] = new Array(LAP_CHART_SAMPLES);
+  const sR: number[] = new Array(LAP_CHART_SAMPLES);
+  const spdArr: number[] = new Array(LAP_CHART_SAMPLES);
+  const lerp = (a: Float32Array, i0: number, i1: number, f: number): number => {
+    const v0 = a[i0], v1 = a[i1];
+    if (!isFinite(v0)) return isFinite(v1) ? v1 : 0;
+    if (!isFinite(v1)) return v0;
+    return v0 + f * (v1 - v0);
+  };
+  for (let i = 0; i < LAP_CHART_SAMPLES; i++) {
+    const t = dur * (i / (LAP_CHART_SAMPLES - 1));
+    tSec[i] = t;
+    const idx = binarySearchLE(frames.tSec, t);
+    const i0 = Math.max(0, idx), i1 = Math.min(frames.tSec.length - 1, idx + 1);
+    const t0 = frames.tSec[i0], t1 = frames.tSec[i1];
+    const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+    const travL = lerp(frames.shockL, i0, i1, f);
+    const travR = lerp(frames.shockR, i0, i1, f);
+    sL[i] = travL; sR[i] = travR;
+    try {
+      const s = solveFrontState(fa, front.chassis.wheelbase, {
+        travL, travR, steerDeg: 0, mode: 'shock',
+      });
+      cambL[i] = s.cL.camber; cambR[i] = s.cR.camber;
+      toeLin[i] = toeInches(s.cL.toe, gd); toeRin[i] = toeInches(s.cR.toe, gd);
+    } catch {
+      cambL[i] = NaN; cambR[i] = NaN; toeLin[i] = NaN; toeRin[i] = NaN;
+    }
+    spdArr[i] = lerp(frames.speedMph, i0, i1, f);
+  }
+  lapChartData = { tSec, cambL, cambR, toeLin, toeRin, shockL: sL, shockR: sR, speedMph: spdArr };
+}
+
+function drawLapCharts(currentTSec: number): void {
+  if (!lapChartData) return;
+  const d = lapChartData;
+  const CY = '#36c2ff', OR = '#ff6a1f';
+  chartMulti(document.getElementById('rchCamb') as HTMLCanvasElement, d.tSec, [
+    { ys: d.cambL, color: CY, markerX: currentTSec },
+    { ys: d.cambR, color: OR, markerX: currentTSec },
+  ]);
+  chartMulti(document.getElementById('rchToe') as HTMLCanvasElement, d.tSec, [
+    { ys: d.toeLin, color: CY, markerX: currentTSec },
+    { ys: d.toeRin, color: OR, markerX: currentTSec },
+  ]);
+  chartMulti(document.getElementById('rchShock') as HTMLCanvasElement, d.tSec, [
+    { ys: d.shockL, color: CY, markerX: currentTSec },
+    { ys: d.shockR, color: OR, markerX: currentTSec },
+  ]);
+  chartMulti(document.getElementById('rchSpeed') as HTMLCanvasElement, d.tSec, [
+    { ys: d.speedMph, color: '#ffd23f', markerX: currentTSec },
+  ]);
+  const fmtRC = (a: number[]) => {
+    const i = Math.max(0, Math.min(a.length - 1,
+      Math.round((currentTSec / (d.tSec[d.tSec.length - 1] || 1)) * (a.length - 1))));
+    return a[i];
+  };
+  const nb = (id: string, v: number, digits: number, unit: string) => {
+    const el = document.getElementById(id); if (el) el.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(digits)}${unit}`;
+  };
+  nb('rCamb', fmtRC(d.cambL), 2, '°');
+  nb('rToe', fmtRC(d.toeLin), 3, '"');
+  nb('rShock', fmtRC(d.shockL), 3, '"');
+  nb('rSpd', fmtRC(d.speedMph), 0, ' mph');
+}
+
+/** Apply a single frame of telemetry to the sim: interpolate shock arrays
+ *  at tSec and drive `solveFrontState({ mode: 'shock', ... })`. M4 will call
+ *  this from the RAF loop; for now it's used on scrub + lap-select. */
+function applyFrameAt(tSec: number): void {
+  if (!currentLapFrames || !fa) return;
+  const { tSec: ts, shockL, shockR, speedMph, lat, lon } = currentLapFrames;
+  const idx = binarySearchLE(ts, tSec);
+  const i0 = Math.max(0, idx), i1 = Math.min(ts.length - 1, idx + 1);
+  const t0 = ts[i0], t1 = ts[i1];
+  const f = t1 > t0 ? (tSec - t0) / (t1 - t0) : 0;
+  const lerp = (a: Float32Array): number => {
+    const v0 = a[i0], v1 = a[i1];
+    if (!isFinite(v0)) return isFinite(v1) ? v1 : 0;
+    if (!isFinite(v1)) return v0;
+    return v0 + f * (v1 - v0);
+  };
+  const travL = lerp(shockL), travR = lerp(shockR);
+  const state = solveFrontState(fa, front.chassis.wheelbase, {
+    travL, travR, steerDeg: 0, mode: 'shock',
+  });
+  lastState = state;
+  scene.update(fa, state, toggles());
+  updateHUD(state);
+  // find last known GPS + speed near tSec
+  const spd = findLastFinite(speedMph, i1);
+  const speedEl = document.getElementById('speedNum');
+  if (speedEl) speedEl.textContent = isFinite(spd) ? spd.toFixed(0) : '—';
+  updateTrackMap(lat, lon, speedMph, i1);
+}
+
+function binarySearchLE(arr: Float32Array, x: number): number {
+  let lo = 0, hi = arr.length - 1;
+  if (arr.length === 0 || x <= arr[0]) return 0;
+  if (x >= arr[hi]) return hi;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >>> 1;
+    if (arr[mid] <= x) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+function findLastFinite(arr: Float32Array, endIdx: number): number {
+  for (let i = endIdx; i >= 0; i--) if (isFinite(arr[i])) return arr[i];
+  return NaN;
+}
+
+/** Stub — M5 fleshes this out. Right now just clears/paints a scan-map. */
+function updateTrackMap(lat: Float32Array, lon: Float32Array, speedMph: Float32Array, curIdx: number): void {
+  const canvas = document.getElementById('trackMapCanvas') as HTMLCanvasElement | null;
+  if (!canvas || !currentLapFrames) return;
+  const dpr = Math.min(devicePixelRatio, 2);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const g = canvas.getContext('2d')!;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  // find lat/lon range, ignore NaN
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (let i = 0; i < lat.length; i++) {
+    if (isFinite(lat[i]) && isFinite(lon[i])) {
+      if (lat[i] < minLat) minLat = lat[i]; if (lat[i] > maxLat) maxLat = lat[i];
+      if (lon[i] < minLon) minLon = lon[i]; if (lon[i] > maxLon) maxLon = lon[i];
+    }
+  }
+  if (!isFinite(minLat) || minLat === maxLat) return;
+  const pad = 8;
+  const rngLat = maxLat - minLat, rngLon = maxLon - minLon;
+  const scale = Math.min((w - 2 * pad) / rngLon, (h - 2 * pad) / rngLat);
+  const cx = (w - rngLon * scale) / 2 - minLon * scale;
+  const cy = (h - rngLat * scale) / 2 + maxLat * scale;
+  const X = (lo: number) => cx + lo * scale;
+  const Y = (la: number) => cy - la * scale;
+  // polyline of the whole lap
+  g.strokeStyle = '#6b7787'; g.lineWidth = 1.5;
+  g.beginPath();
+  let started = false;
+  for (let i = 0; i < lat.length; i++) {
+    if (!isFinite(lat[i])) continue;
+    const px = X(lon[i]), py = Y(lat[i]);
+    if (!started) { g.moveTo(px, py); started = true; } else g.lineTo(px, py);
+  }
+  g.stroke();
+  // current position dot
+  const li = findLastFiniteIdx(lat, curIdx);
+  if (li >= 0) {
+    g.fillStyle = '#ff6a1f';
+    g.beginPath(); g.arc(X(lon[li]), Y(lat[li]), 5, 0, 7); g.fill();
+    g.strokeStyle = '#0d1014'; g.lineWidth = 1.5; g.stroke();
+  }
+  const title = document.getElementById('trackMapTitle');
+  if (title) title.textContent = `TRACK — lap ${replayState.selectedLap ?? '?'}`;
+}
+function findLastFiniteIdx(arr: Float32Array, endIdx: number): number {
+  for (let i = endIdx; i >= 0; i--) if (isFinite(arr[i])) return i;
+  return -1;
+}
+
+rebuildEditor();
 syncAdjInputs();
 rebuild();
 captureBaseline();

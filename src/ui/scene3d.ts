@@ -10,6 +10,8 @@ import { Vec3 } from '../core/math';
 import { CornerDiagnostics, CornerStatic, CornerSolution } from '../core/assembly';
 import { FrontAssembly } from '../core/trim';
 import { FrontState } from '../core/metrics';
+import type { Side } from '../core/parts';
+import type { PartId } from './panels';
 
 const T = (v: Vec3) => new THREE.Vector3(v.x, v.y, v.z);
 const V3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -89,11 +91,14 @@ export class Scene3D {
     this.resetView();
     this.controls.addEventListener('change', () => this.render());
 
-    this.visR = this.makeSide(0xff6a1f);
-    this.visL = this.makeSide(0x36c2ff);
+    this.visR = this.makeSide(0xff6a1f, 'R');
+    this.visL = this.makeSide(0x36c2ff, 'L');
     this.linkPitman = this.rod(0.42, COL.arm);
     this.linkIdler = this.rod(0.42, COL.arm);
     this.linkCenter = this.rod(0.48, COL.link);
+    this.tagPart(this.linkPitman, 'steering', null);
+    this.tagPart(this.linkIdler, 'steering', null);
+    this.tagPart(this.linkCenter, 'steering', null);
     this.pivPit = this.ball(0.8, COL.frame);
     this.pivIdl = this.ball(0.8, COL.frame);
     this.rcDot = this.ball(1.0, 0xffd23f);
@@ -313,8 +318,8 @@ export class Scene3D {
     return g;
   }
 
-  private makeSide(rimCol: number): SideVis {
-    return {
+  private makeSide(rimCol: number, side: Side): SideVis {
+    const v: SideVis = {
       lowA1: this.rod(0.42, COL.low), lowA2: this.rod(0.42, COL.low),
       upA1: this.rod(0.38, COL.up), upA2: this.rod(0.38, COL.up),
       uprLow: this.rod(0.5, COL.upr), uprHigh: this.rod(0.5, COL.upr),
@@ -326,6 +331,63 @@ export class Scene3D {
       shockBody: this.rod(0.55, COL.shock), shockShaft: this.rod(0.26, 0xcdd6e0),
       swingLine: this.lineObj(0x7a8aa0, true), icDot: this.ball(0.6, 0x7a8aa0),
     };
+    // tag each mesh with the part it belongs to — used by pickPart()
+    this.tagPart(v.lowA1, 'lca', side); this.tagPart(v.lowA2, 'lca', side);
+    this.tagPart(v.upA1, 'uca', side); this.tagPart(v.upA2, 'uca', side);
+    this.tagPart(v.uprLow, 'spindle', side); this.tagPart(v.uprHigh, 'spindle', side);
+    this.tagPart(v.pin, 'spindle', side); this.tagPart(v.hub, 'spindle', side);
+    this.tagPart(v.arm, 'spindle', side);
+    this.tagPart(v.bjL, 'lca', side); this.tagPart(v.bjU, 'uca', side);
+    this.tagPart(v.tie, 'tieRod', side);
+    this.tagPart(v.wheel, 'wheel', side);
+    this.tagPart(v.shockBody, 'shock', side); this.tagPart(v.shockShaft, 'shock', side);
+    return v;
+  }
+
+  private tagPart(o: THREE.Object3D, part: PartId, side: Side | null): void {
+    o.userData.part = part;
+    if (side) o.userData.side = side;
+    // wheels are groups — tag children so the raycast hits them too
+    o.traverse((c) => { c.userData.part = part; if (side) c.userData.side = side; });
+  }
+
+  /** Raycast against tagged sim meshes and return which part was hit.
+   *  Returns null if the click missed all tagged geometry. */
+  pickPart(ndc: { x: number; y: number }): { part: PartId; side: Side | null } | null {
+    if (!this.simRoot.visible) return null;
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), this.camera);
+    const targets: THREE.Object3D[] = [];
+    this.simRoot.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh && o.visible && o.userData.part) targets.push(o);
+    });
+    const hits = rc.intersectObjects(targets, false);
+    if (!hits.length) return null;
+    const h = hits[0].object;
+    return { part: h.userData.part as PartId, side: (h.userData.side as Side | undefined) ?? null };
+  }
+
+  /** Subtle emissive tint on the meshes of the selected part.
+   *  Pass (null, null) to clear. */
+  private highlightMats = new Map<THREE.Mesh, number>();
+  setPartHighlight(part: PartId | null, side: Side | null): void {
+    // restore prior tints
+    this.highlightMats.forEach((emIntensity, m) => {
+      const mat = m.material as THREE.MeshStandardMaterial;
+      if (mat && 'emissiveIntensity' in mat) mat.emissiveIntensity = emIntensity;
+    });
+    this.highlightMats.clear();
+    if (!part) { this.render(); return; }
+    this.simRoot.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.userData.part !== part) return;
+      if (side && m.userData.side && m.userData.side !== side) return;
+      const mat = m.material as THREE.MeshStandardMaterial;
+      if (!mat || !('emissiveIntensity' in mat)) return;
+      this.highlightMats.set(m, mat.emissiveIntensity ?? 0);
+      mat.emissiveIntensity = 0.55;
+    });
+    this.render();
   }
 
   private drawCorner(v: SideVis, stat: CornerStatic, c: CornerSolution): void {

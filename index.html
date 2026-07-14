@@ -6,9 +6,137 @@
 <title>CLR Suspension Builder</title>
 <link rel="stylesheet" href="/src/style.css">
 </head>
-<body>
+<body data-mode="build">
+<button class="drawerToggle" id="drawerToggle">☰ Controls</button>
+<div id="drawerBackdrop"></div>
 <div id="app">
-  <!-- ================= 3D STAGE (top-left) ================= -->
+  <!-- ================= LEFT RAIL: mode switch + parts / tune tools ================= -->
+  <aside id="leftRail">
+    <div class="railHead">
+      <div class="seg modeSeg" id="modeSwitch">
+        <button data-uimode="build" class="on">Build</button>
+        <button data-uimode="tune">Tune</button>
+        <button data-uimode="replay">Replay</button>
+      </div>
+    </div>
+
+    <!-- Build mode: parts nav + focused editor + scan controls -->
+    <div class="railBody buildOnly">
+      <div class="phead">Parts <span class="pheadnote">click a part or the 3D model</span></div>
+      <nav id="partList" class="partList">
+        <button class="partBtn" data-part="chassis">Chassis</button>
+        <button class="partBtn" data-part="steering">Steering linkage</button>
+        <button class="partBtn" data-part="lca">Lower control arm</button>
+        <button class="partBtn" data-part="uca">Upper control arm</button>
+        <button class="partBtn" data-part="spindle">Spindle</button>
+        <button class="partBtn" data-part="tieRod">Tie rod</button>
+        <button class="partBtn" data-part="shock">Shock</button>
+        <button class="partBtn" data-part="wheel">Wheel &amp; tire</button>
+      </nav>
+
+      <div class="sideBar">
+        <div class="seg sideSeg" id="sideSwitch">
+          <button data-uiside="L">LEFT</button>
+          <button data-uiside="R" class="on">RIGHT</button>
+        </div>
+      </div>
+
+      <div id="partEditor" class="partEditor"></div>
+
+      <div class="grp scanGrp">
+        <h3>3D scan</h3>
+        <div class="cardhelp"><b>The process:</b> Load scan →
+          <b>Measure whole car</b> — one guided pass that aligns off the four
+          lower-arm pivots, then walks you through every chassis and spindle
+          point (~25 clicks). Nothing assembles until the last click, so
+          half-measured states can't fail on you. On stands at full droop
+          with wheels off is <b>fine</b>. <b>S</b> skips a step ·
+          <b>H</b> hides the model · <b>Esc</b> cancels (undoes everything).</div>
+        <div class="btns">
+          <button class="b" id="scanLoad">Load scan</button>
+          <button class="b primary" id="scanMeasure" disabled>⌖ Measure whole car</button>
+        </div>
+        <div class="btns" style="margin-top:6px">
+          <button class="b" id="scanAlign" disabled>Re-align only</button>
+        </div>
+        <input type="file" id="scanFile" accept=".glb,.gltf,.obj,.stl,.ply,.asc,.xyz" style="display:none">
+        <div class="numrow" style="margin-top:8px">
+          <div class="nf"><label>Scan units</label>
+            <select id="scanUnits">
+              <option value="mm" selected>mm</option>
+              <option value="cm">cm</option>
+              <option value="m">m</option>
+              <option value="in">inches</option>
+            </select></div>
+          <div class="nf"><label>Opacity</label>
+            <input type="range" id="scanOpacity" min="0.05" max="1" step="0.05" value="0.85" style="height:34px"></div>
+        </div>
+        <div class="numrow" id="scanScaleRow" style="display:none">
+          <div class="nf"><label>Lower pivot height at ride (in) — "the bottom"</label>
+            <input type="number" id="scanPivotH" step="0.05"></div>
+          <div class="nf"><label>True LF↔RF pivot dist (in)</label>
+            <input type="number" id="scanScaleActual" step="0.05" placeholder="optional, overrides units"></div>
+        </div>
+        <div class="btns" style="margin-top:6px">
+          <label class="tg on" style="flex:1"><input type="checkbox" id="scanVisible" checked> Show scan</label>
+          <button class="b" id="scanClear">Unload</button>
+        </div>
+        <div class="err" id="scanStatus"></div>
+      </div>
+    </div>
+
+    <!-- Tune mode: calibration + setup file + baseline -->
+    <div class="railBody tuneOnly">
+      <div class="grp">
+        <h3>Spindle calibration</h3>
+        <div class="cardhelp">Pin angles can't be tape-measured. Enter what the
+          gauges read <b>right now</b> at ride; the pin direction is back-solved
+          and stored on the spindle part.</div>
+        <div class="adjrow"><div class="al">Measured camber <span>degrees</span></div>
+          <div class="pair">
+            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.1" value="-1.0" data-cal="L" data-ckey="camber"><button data-inc>+</button></div>
+            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.1" value="-1.0" data-cal="R" data-ckey="camber"><button data-inc>+</button></div>
+          </div></div>
+        <div class="cardhelp" style="margin-top:2px"><b>Toe convention:</b> LEFT wheel is your reference (straight ahead, toe = 0).
+          Only the RIGHT wheel is measured — its value <i>is</i> the total toe.</div>
+        <div class="adjrow"><div class="al">Right wheel toe <span>inches (L = 0)</span></div>
+          <div class="pair">
+            <div class="stepper L" style="opacity:.35;pointer-events:none"><button>−</button><input type="number" value="0" disabled title="LEFT is the reference — always 0"><button>+</button></div>
+            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.005" value="0" data-cal="R" data-ckey="toe"><button data-inc>+</button></div>
+          </div></div>
+        <div class="btns" style="margin-top:10px">
+          <button class="b primary" id="calBtn">Calibrate spindles</button>
+        </div>
+        <div class="err" id="calMsg"></div>
+      </div>
+
+      <div class="grp">
+        <h3>Setup file</h3>
+        <div class="cardhelp"><b>x</b> = fore/aft from axle center (+ fwd) ·
+          <b>out</b> = from centerline (always +) · <b>z</b> = height off
+          ground at reference ride. Everything <b>auto-saves in this
+          browser</b> — Save setup exports a file for backup/sharing.</div>
+        <div class="btns">
+          <button class="b primary" id="hpSave">Save setup</button>
+          <button class="b" id="hpLoad">Load setup / v4</button>
+        </div>
+        <div class="btns" style="margin-top:8px">
+          <button class="b primary" id="hpMirror">Mirror R → L</button>
+          <button class="b" id="hpReset">Reset defaults</button>
+        </div>
+        <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
+        <div class="err" id="hpErr"></div>
+      </div>
+
+    </div>
+
+    <!-- Replay mode: session loader, sensor mapping, lap picker, playback -->
+    <div class="railBody replayOnly" id="replayRail"></div>
+  </aside>
+
+  <div id="lsplit" title="drag to resize"></div>
+
+  <!-- ================= 3D STAGE ================= -->
   <div id="stage">
     <div id="scene"></div>
     <div class="badge">
@@ -22,24 +150,26 @@
       <div class="row"><span class="k">Toe in</span><span class="splitv"><span class="v L" id="sToeL">0</span><span class="v R" id="sToeR">0</span></span></div>
       <div class="row"><span class="k">Total toe in</span><span class="v" id="sTotToe">0</span></div>
       <div class="row"><span class="k">Track width</span><span class="v" id="sTrack">0</span></div>
-      <h4>Per Corner (live)</h4>
-      <div class="row"><span class="k">Wheel travel</span><span class="splitv"><span class="v L" id="hWtL">0.0</span><span class="v R" id="hWtR">0.0</span></span></div>
-      <div class="row"><span class="k">Shock travel</span><span class="splitv"><span class="v L" id="hStL">0.0</span><span class="v R" id="hStR">0.0</span></span></div>
-      <div class="row"><span class="k">Motion ratio</span><span class="splitv"><span class="v L" id="hMrL">0.0</span><span class="v R" id="hMrR">0.0</span></span></div>
-      <div class="row"><span class="k">Camber °</span><span class="splitv"><span class="v L" id="hCambL">0</span><span class="v R" id="hCambR">0</span></span></div>
-      <div class="row"><span class="k">Toe in</span><span class="splitv"><span class="v L" id="hToeL">0</span><span class="v R" id="hToeR">0</span></span></div>
-      <div class="row"><span class="k">Caster ° (live)</span><span class="splitv"><span class="v L" id="hCasterL">0</span><span class="v R" id="hCasterR">0</span></span></div>
-      <div class="row"><span class="k">KPI ° (live)</span><span class="splitv"><span class="v L" id="hKpiL">0</span><span class="v R" id="hKpiR">0</span></span></div>
-      <div class="row"><span class="k">Scrub rad in</span><span class="splitv"><span class="v L" id="hScrubL">0</span><span class="v R" id="hScrubR">0</span></span></div>
-      <div class="row"><span class="k">Mech trail in</span><span class="splitv"><span class="v L" id="hTrailL">0</span><span class="v R" id="hTrailR">0</span></span></div>
-      <div class="row"><span class="k">Camber gain</span><span class="splitv"><span class="v L" id="hGainL">0</span><span class="v R" id="hGainR">0</span></span></div>
-      <h4>Steering</h4>
-      <div class="row"><span class="k">Road steer °</span><span class="splitv"><span class="v L" id="hSteerL">0</span><span class="v R" id="hSteerR">0</span></span></div>
-      <div class="row"><span class="k">Ackermann</span><span class="v" id="hAck">—</span></div>
-      <div class="row"><span class="k">Toe-out / turn</span><span class="v" id="hTot">—</span></div>
-      <h4>Roll Center</h4>
-      <div class="row"><span class="k">Height</span><span class="v rc" id="hRcZ">0.0"</span></div>
-      <div class="row"><span class="k">Lateral</span><span class="v rc" id="hRcY">0.0"</span></div>
+      <div class="tuneOnly">
+        <h4>Per Corner (live)</h4>
+        <div class="row"><span class="k">Wheel travel</span><span class="splitv"><span class="v L" id="hWtL">0.0</span><span class="v R" id="hWtR">0.0</span></span></div>
+        <div class="row"><span class="k">Shock travel</span><span class="splitv"><span class="v L" id="hStL">0.0</span><span class="v R" id="hStR">0.0</span></span></div>
+        <div class="row"><span class="k">Motion ratio</span><span class="splitv"><span class="v L" id="hMrL">0.0</span><span class="v R" id="hMrR">0.0</span></span></div>
+        <div class="row"><span class="k">Camber °</span><span class="splitv"><span class="v L" id="hCambL">0</span><span class="v R" id="hCambR">0</span></span></div>
+        <div class="row"><span class="k">Toe in</span><span class="splitv"><span class="v L" id="hToeL">0</span><span class="v R" id="hToeR">0</span></span></div>
+        <div class="row"><span class="k">Caster ° (live)</span><span class="splitv"><span class="v L" id="hCasterL">0</span><span class="v R" id="hCasterR">0</span></span></div>
+        <div class="row"><span class="k">KPI ° (live)</span><span class="splitv"><span class="v L" id="hKpiL">0</span><span class="v R" id="hKpiR">0</span></span></div>
+        <div class="row"><span class="k">Scrub rad in</span><span class="splitv"><span class="v L" id="hScrubL">0</span><span class="v R" id="hScrubR">0</span></span></div>
+        <div class="row"><span class="k">Mech trail in</span><span class="splitv"><span class="v L" id="hTrailL">0</span><span class="v R" id="hTrailR">0</span></span></div>
+        <div class="row"><span class="k">Camber gain</span><span class="splitv"><span class="v L" id="hGainL">0</span><span class="v R" id="hGainR">0</span></span></div>
+        <h4>Steering</h4>
+        <div class="row"><span class="k">Road steer °</span><span class="splitv"><span class="v L" id="hSteerL">0</span><span class="v R" id="hSteerR">0</span></span></div>
+        <div class="row"><span class="k">Ackermann</span><span class="v" id="hAck">—</span></div>
+        <div class="row"><span class="k">Toe-out / turn</span><span class="v" id="hTot">—</span></div>
+        <h4>Roll Center</h4>
+        <div class="row"><span class="k">Height</span><span class="v rc" id="hRcZ">0.0"</span></div>
+        <div class="row"><span class="k">Lateral</span><span class="v rc" id="hRcY">0.0"</span></div>
+      </div>
     </div>
     <div class="legend">
       <span><i class="dot" style="background:var(--accent)"></i>right</span>
@@ -47,16 +177,19 @@
       <span><i class="dot" style="background:var(--rc)"></i>roll center</span>
       <span>drag orbit · scroll zoom · middle/right-drag pan</span>
     </div>
-    <div id="fv"><div class="fvh">FRONT VIEW — roll-center construction</div><canvas id="fvCanvas"></canvas><div class="fvf" id="fvInfo"></div></div>
+    <div id="fv" class="tuneOnly"><div class="fvh">FRONT VIEW — roll-center construction</div><canvas id="fvCanvas"></canvas><div class="fvf" id="fvInfo"></div></div>
+    <div id="trackMap" class="replayOnly"><div class="fvh" id="trackMapTitle">TRACK — no lap loaded</div><canvas id="trackMapCanvas"></canvas></div>
+    <div id="speedBadge" class="replayOnly">
+      <div class="speedNum" id="speedNum">0</div>
+      <div class="speedUnit">mph</div>
+    </div>
     <div id="asmErr"></div>
     <div id="pickMsg"></div>
   </div>
 
-  <!-- ================= SPLITTERS ================= -->
   <div id="vsplit" title="drag to resize"></div>
-  <div id="hsplit" title="drag to resize"></div>
 
-  <!-- ================= RIGHT DOCK: controls + charts ================= -->
+  <!-- ================= RIGHT DOCK: controls (Tune shows adjustments + charts) ================= -->
   <div id="right">
     <div class="pane" id="paneControls">
       <div class="phead">Controls</div>
@@ -76,17 +209,17 @@
             <label>Right <span id="lblR">wheel</span> travel<span class="val" id="vTravR">0.00 in</span></label>
             <input type="range" id="travR" min="-5" max="5" step="0.02" value="0">
           </div>
-          <div class="ctl">
+          <div class="ctl tuneOnly">
             <label>Steering<span class="val s" id="vSteer">0.0°</span></label>
             <input type="range" id="steer" min="-25" max="25" step="0.5" value="0">
           </div>
           <div class="btns" style="margin-top:12px">
-            <button class="b" id="zeroInputs">Zero motion</button>
+            <button class="b tuneOnly" id="zeroInputs">Zero motion</button>
             <button class="b" id="recenter">Reset view</button>
           </div>
         </div>
 
-        <div class="grp">
+        <div class="grp tuneOnly">
           <h3>Adjustments (wrench moves, in turns)</h3>
           <div class="adjrow"><div class="al">Upper heim — front <span>turns</span></div>
             <div class="pair">
@@ -140,115 +273,33 @@
           <h3>Display</h3>
           <div class="toggles">
             <label class="tg on"><input type="checkbox" id="tModel" checked> Sim model (H)</label>
-            <label class="tg on"><input type="checkbox" id="tConstruct" checked> Construction lines</label>
-            <label class="tg on"><input type="checkbox" id="tTrail" checked> RC migration trail</label>
-            <label class="tg on"><input type="checkbox" id="tShock" checked> Shock</label>
+            <label class="tg on tuneOnly"><input type="checkbox" id="tConstruct" checked> Construction lines</label>
+            <label class="tg on tuneOnly"><input type="checkbox" id="tTrail" checked> RC migration trail</label>
+            <label class="tg on tuneOnly"><input type="checkbox" id="tShock" checked> Shock</label>
             <label class="tg"><input type="checkbox" id="tWire"> Wheel wireframe</label>
-            <label class="tg on"><input type="checkbox" id="tFront" checked> Front view (2D)</label>
-            <label class="tg on"><input type="checkbox" id="tGhost" checked> Baseline ghost</label>
+            <label class="tg on tuneOnly"><input type="checkbox" id="tFront" checked> Front view (2D)</label>
+            <label class="tg on tuneOnly"><input type="checkbox" id="tGhost" checked> Baseline ghost</label>
           </div>
         </div>
       </div>
     </div>
     <div id="rsplit" title="drag to resize"></div>
-    <div class="pane" id="paneCharts">
-      <div class="phead">Charts — L/R vs wheel travel <span class="pheadnote">solid = current · dashed = baseline</span></div>
+    <div class="pane " id="paneCharts">
+      <div class="phead"><span class="buildTuneOnly">Charts — L/R vs wheel travel</span><span class="replayOnly">Lap charts — vs lap time</span> <span class="pheadnote">solid = current · dashed = baseline</span></div>
       <div class="pbody">
-        <div class="charts">
+        <div class="charts buildTuneOnly">
           <div class="chart"><h5>Camber (°) <b id="cCamb"></b></h5><canvas id="chCamb"></canvas></div>
           <div class="chart"><h5>Bump steer (toe, in) <b id="cToe"></b></h5><canvas id="chToe"></canvas></div>
           <div class="chart"><h5>Caster (°) <b id="cCast"></b></h5><canvas id="chCast"></canvas></div>
           <div class="chart"><h5>Roll-center height (in) <b id="cRc"></b></h5><canvas id="chRc"></canvas></div>
         </div>
+        <div class="charts replayOnly">
+          <div class="chart"><h5>Camber (°) <b id="rCamb"></b></h5><canvas id="rchCamb"></canvas></div>
+          <div class="chart"><h5>Toe (in) <b id="rToe"></b></h5><canvas id="rchToe"></canvas></div>
+          <div class="chart"><h5>Shock travel (in) <b id="rShock"></b></h5><canvas id="rchShock"></canvas></div>
+          <div class="chart"><h5>Speed (mph) <b id="rSpd"></b></h5><canvas id="rchSpeed"></canvas></div>
+        </div>
       </div>
-    </div>
-  </div>
-
-  <!-- ================= BOTTOM DOCK: setup ================= -->
-  <div id="bottom">
-    <div class="phead">Setup — measurements &amp; part cards <span class="pheadnote">alignment is an output · focus a coordinate: magenta crosshair shows it in 3D, ↑↓ = 0.1" · Shift+↑↓ = 0.01"</span></div>
-    <div class="pbody" id="setupBody">
-      <div class="card">
-        <h4>Spindle calibration</h4>
-        <div class="cardhelp">Pin angles can't be tape-measured. Enter what the
-          gauges read <b>right now</b> at ride; the pin direction is back-solved
-          and stored on the spindle part.</div>
-        <div class="adjrow"><div class="al">Measured camber <span>degrees</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.1" value="-1.0" data-cal="L" data-ckey="camber"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.1" value="-1.0" data-cal="R" data-ckey="camber"><button data-inc>+</button></div>
-          </div></div>
-        <div class="adjrow"><div class="al">Measured toe <span>inches</span></div>
-          <div class="pair">
-            <div class="stepper L"><button data-dec>−</button><input type="number" step="0.005" value="0" data-cal="L" data-ckey="toe"><button data-inc>+</button></div>
-            <div class="stepper R"><button data-dec>−</button><input type="number" step="0.005" value="0" data-cal="R" data-ckey="toe"><button data-inc>+</button></div>
-          </div></div>
-        <div class="btns" style="margin-top:10px">
-          <button class="b primary" id="calBtn">Calibrate spindles</button>
-        </div>
-        <div class="err" id="calMsg"></div>
-      </div>
-
-      <div class="card">
-        <h4>3D scan (EinScan etc.)</h4>
-        <div class="cardhelp"><b>The process:</b> Load scan →
-          <b>Measure whole car</b> — one guided pass that aligns off the four
-          lower-arm pivots, then walks you through every chassis and spindle
-          point (~25 clicks). Nothing assembles until the last click, so
-          half-measured states can't fail on you. On stands at full droop
-          with wheels off is <b>fine</b>. <b>S</b> skips a step ·
-          <b>H</b> hides the model · <b>Esc</b> cancels (undoes everything).</div>
-        <div class="btns">
-          <button class="b" id="scanLoad">Load scan</button>
-          <button class="b primary" id="scanMeasure" disabled>⌖ Measure whole car</button>
-        </div>
-        <div class="btns" style="margin-top:6px">
-          <button class="b" id="scanAlign" disabled>Re-align only</button>
-        </div>
-        <input type="file" id="scanFile" accept=".glb,.gltf,.obj,.stl,.ply,.asc,.xyz" style="display:none">
-        <div class="numrow" style="margin-top:8px">
-          <div class="nf"><label>Scan units</label>
-            <select id="scanUnits">
-              <option value="mm" selected>mm</option>
-              <option value="cm">cm</option>
-              <option value="m">m</option>
-              <option value="in">inches</option>
-            </select></div>
-          <div class="nf"><label>Opacity</label>
-            <input type="range" id="scanOpacity" min="0.05" max="1" step="0.05" value="0.85" style="height:34px"></div>
-        </div>
-        <div class="numrow" id="scanScaleRow" style="display:none">
-          <div class="nf"><label>Lower pivot height at ride (in) — "the bottom"</label>
-            <input type="number" id="scanPivotH" step="0.05"></div>
-          <div class="nf"><label>True LF↔RF pivot dist (in)</label>
-            <input type="number" id="scanScaleActual" step="0.05" placeholder="optional, overrides units"></div>
-        </div>
-        <div class="btns" style="margin-top:6px">
-          <label class="tg on" style="flex:1"><input type="checkbox" id="scanVisible" checked> Show scan</label>
-          <button class="b" id="scanClear">Unload</button>
-        </div>
-        <div class="err" id="scanStatus"></div>
-      </div>
-
-      <div class="card">
-        <h4>Setup file</h4>
-        <div class="cardhelp"><b>x</b> = fore/aft from axle center (+ fwd) ·
-          <b>out</b> = from centerline (always +) · <b>z</b> = height off
-          ground at reference ride. Everything <b>auto-saves in this
-          browser</b> — Save setup exports a file for backup/sharing.</div>
-        <div class="btns">
-          <button class="b primary" id="hpSave">Save setup</button>
-          <button class="b" id="hpLoad">Load setup / v4</button>
-        </div>
-        <div class="btns" style="margin-top:8px">
-          <button class="b primary" id="hpMirror">Mirror R → L</button>
-          <button class="b" id="hpReset">Reset defaults</button>
-        </div>
-        <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
-        <div class="err" id="hpErr"></div>
-      </div>
-
-      <div id="hpForm" style="display:contents"></div>
     </div>
   </div>
 </div>

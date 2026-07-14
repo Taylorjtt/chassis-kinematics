@@ -39,8 +39,15 @@ export interface Chassis extends PartBase {
   kind: 'chassis';
   wheelbase: number;
   sides: { R: ChassisSide; L: ChassisSide };
-  steeringBox: { pivot: T3; pitmanEnd: T3 };
-  idler: { pivot: T3; armEnd: T3 };
+  /** Pitman arm on the steering box. `pitmanEnd` is the vertical-axis taper
+   *  joint where the arm hits the center link. `tieRodInner` (optional) is a
+   *  SEPARATE fore/aft-axis taper joint elsewhere on the center link where
+   *  the pitman-side tie rod attaches. If unset, defaults to `pitmanEnd`
+   *  (matches pre-2026-07 saves — the two were modeled as one point). */
+  steeringBox: { pivot: T3; pitmanEnd: T3; tieRodInner?: T3 };
+  /** Idler arm. Same story: `armEnd` is the arm's ball joint on the center
+   *  link, `tieRodInner` (optional) is the idler-side tie-rod attachment. */
+  idler: { pivot: T3; armEnd: T3; tieRodInner?: T3 };
 }
 
 /**

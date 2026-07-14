@@ -493,14 +493,38 @@ export class SteeringLinkage {
     );
     this.warmBeta = beta;
     const CLR = rotAboutAxis(CLR0, Pi, Z, beta);
-    // each tie rod takes the center-link end on ITS side of the car —
-    // decided by GEOMETRY, not by pitman/idler naming (the steering box can
-    // sit on either side; on most GM circle-track chassis it's on the LEFT)
+
+    // The tie-rod inner joints are SEPARATE points on the center link from
+    // the pitman/idler arm ends. If the user has scanned them, they sit
+    // wherever they physically are on the link; if not, we fall back to the
+    // arm ends (pre-2026-07 behavior). Either way the link is rigid — as
+    // pitman rotates and idler follows, every point on the link translates
+    // and rotates with it, so we rigid-body-transform the reference TRI0
+    // positions from (CLL0→CLR0) to (CLL→CLR).
+    const triLinkPit0 = P(c.steeringBox.tieRodInner ?? c.steeringBox.pitmanEnd);
+    const triLinkIdl0 = P(c.idler.tieRodInner ?? c.idler.armEnd);
+    const dx0 = CLR0.x - CLL0.x, dy0 = CLR0.y - CLL0.y;
+    const dx = CLR.x - CLL.x, dy = CLR.y - CLL.y;
+    // horizontal-plane rotation of the link (its ends live at possibly
+    // different z; we treat the link as rigid in the horizontal plane and
+    // let each attachment keep its own z relative to CLL). This is exact
+    // when the link is horizontal and a very close approximation otherwise.
+    const th = Math.atan2(dy, dx) - Math.atan2(dy0, dx0);
+    const cs = Math.cos(th), sn = Math.sin(th);
+    const rigid = (P0: Vec3): Vec3 => {
+      const rx = P0.x - CLL0.x, ry = P0.y - CLL0.y, rz = P0.z - CLL0.z;
+      return V(CLL.x + cs * rx - sn * ry, CLL.y + sn * rx + cs * ry, CLL.z + rz);
+    };
+    const triPit = rigid(triLinkPit0);
+    const triIdl = rigid(triLinkIdl0);
+
+    // route by GEOMETRY (car y sign), not pitman/idler naming — the steering
+    // box can be on either side of the chassis
     const pitmanIsLeft = CLL0.y > CLR0.y;
     return {
       CLL, CLR, Pp, Pi,
-      TRI_L: (pitmanIsLeft ? CLL : CLR).clone(),
-      TRI_R: (pitmanIsLeft ? CLR : CLL).clone(),
+      TRI_L: (pitmanIsLeft ? triPit : triIdl).clone(),
+      TRI_R: (pitmanIsLeft ? triIdl : triPit).clone(),
     };
   }
 }

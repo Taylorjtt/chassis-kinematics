@@ -3,7 +3,8 @@
     "allow": [
       "PowerShell(if \\($env:ANTHROPIC_API_KEY\\) { \"Session env var: SET \\(starts with $\\($env:ANTHROPIC_API_KEY.Substring\\(0,12\\)\\)...\\)\" } else { \"Session env var: not set\" }; \"User-level: \" + [Environment]::GetEnvironmentVariable\\('ANTHROPIC_API_KEY','User'\\) -ne $null; \"Machine-level: \" + \\([Environment]::GetEnvironmentVariable\\('ANTHROPIC_API_KEY','Machine'\\) -ne $null\\))",
       "PowerShell($profiles = @\\($PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost, \"$env:USERPROFILE\\\\.bashrc\", \"$env:USERPROFILE\\\\.bash_profile\", \"$env:USERPROFILE\\\\.profile\"\\); foreach \\($p in $profiles\\) { if \\(Test-Path $p\\) { $hits = Select-String -Path $p -Pattern 'ANTHROPIC_API_KEY' -SimpleMatch; if \\($hits\\) { \"$p :\"; $hits | ForEach-Object { \"  line $\\($_.LineNumber\\): $\\($_.Line.Trim\\(\\)\\)\" } } else { \"$p : clean\" } } else { \"$p : \\(does not exist\\)\" } })",
-      "PowerShell(npm *)"
+      "PowerShell(npm *)",
+      "Bash(npm run *)"
     ]
   }
 }

@@ -11,6 +11,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@types/sql.js": "^1.4.11",
+    "jszip": "^3.10.1",
+    "sql.js": "^1.14.1",
     "three": "^0.169.0",
     "three-mesh-bvh": "^0.9.11"
   },
