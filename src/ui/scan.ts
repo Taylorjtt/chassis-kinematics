@@ -123,16 +123,19 @@ export class ScanManager {
       }
     });
 
-    // provisional fit: center on origin, ground the bbox, keep aspect —
-    // a mm-unit whole car would otherwise be 100x the grid
+    // Provisional fit: center on origin. Only rescale when the mesh is
+    // clearly at the wrong scale (raw EinScan mm exports = thousands of
+    // units; micro scans = fractions). A car front at inch-scale (bbox
+    // ~50–200 units) is already right and gets left alone so the user can
+    // align without a scale surprise. `applyChassisAlignment` will apply
+    // whatever unit conversion the user picked from the dropdown.
     const bb = new THREE.Box3().setFromObject(obj);
     const size = bb.getSize(new THREE.Vector3()).length() || 1;
-    const s = 140 / size;
+    const s = (size > 500 || size < 10) ? 140 / size : 1;
     const c = bb.getCenter(new THREE.Vector3());
     this.group.matrix.identity()
       .premultiply(new THREE.Matrix4().makeTranslation(-c.x, -c.y, -c.z))
-      .premultiply(new THREE.Matrix4().makeScale(s, s, s))
-      .premultiply(new THREE.Matrix4().makeTranslation(0, 0, (bb.max.z - bb.min.z) * s * 0.0));
+      .premultiply(new THREE.Matrix4().makeScale(s, s, s));
     this.group.add(obj);
     this.loaded = true;
     this.aligned = false;
@@ -295,6 +298,56 @@ export class ScanManager {
       const rec = JSON.parse(localStorage.getItem(ALIGN_KEY) ?? 'null') as StoredAlign | null;
       return rec && rec.sig === this.fileSig ? rec : null;
     } catch { return null; }
+  }
+
+  /** Wipe stored alignment (both per-user localStorage and the currently
+   *  applied transform) and re-fit the mesh to the provisional view. Use
+   *  when a botched align made the mesh vanish/shrink and the user needs a
+   *  clean slate without re-loading the file. */
+  resetAlignment(): void {
+    try { localStorage.removeItem(ALIGN_KEY); } catch { /* ignore */ }
+    this.aligned = false;
+    if (!this.loaded) return;
+    // Recompute the provisional fit (identical to what load() does after
+    // parsing the mesh — center + scale so the whole car lands near origin).
+    const targets = this.group.children.filter((c) => c !== this.markers);
+    if (!targets.length) return;
+    // Clear any current transform before measuring the bbox so we're
+    // computing in the mesh's OWN coordinate space, not the transformed one.
+    this.group.matrix.identity();
+    this.group.updateMatrixWorld(true);
+    const bb = new THREE.Box3();
+    targets.forEach((t) => bb.expandByObject(t));
+    if (bb.isEmpty()) return;
+    const size = bb.getSize(new THREE.Vector3()).length() || 1;
+    const s = (size > 500 || size < 10) ? 140 / size : 1;
+    const c = bb.getCenter(new THREE.Vector3());
+    this.group.matrix.identity()
+      .premultiply(new THREE.Matrix4().makeTranslation(-c.x, -c.y, -c.z))
+      .premultiply(new THREE.Matrix4().makeScale(s, s, s));
+    this.group.updateMatrixWorld(true);
+  }
+
+  /** Snapshot of the current alignment transform (16-float 4x4 matrix +
+   *  file signature). Used to export alignment as a static asset the app
+   *  can ship to every visitor. Returns null before alignment is applied. */
+  exportAlignment(): { sig: string; matrix: number[] } | null {
+    if (!this.aligned || !this.fileSig) return null;
+    return { sig: this.fileSig, matrix: this.group.matrix.toArray() };
+  }
+
+  /** Apply an alignment transform that was computed off-page (e.g. shipped
+   *  as a demo asset). Skips the picks pipeline entirely and just installs
+   *  the matrix. `sig` must match the currently loaded scan's signature so
+   *  we don't apply the wrong transform to a different file. */
+  applyExternalAlignment(rec: { sig: string; matrix: number[] }): boolean {
+    if (!this.loaded || !this.fileSig) return false;
+    if (rec.sig !== this.fileSig) return false;
+    if (rec.matrix.length !== 16) return false;
+    this.group.matrix.fromArray(rec.matrix);
+    this.group.updateMatrixWorld(true);
+    this.aligned = true;
+    return true;
   }
 }
 

@@ -21,6 +21,7 @@ const DEMO_CAR_PATH = 'demo-car.json';
 const DEMO_LAP_PATH = 'demo-lap.zip';
 const DEMO_SESSION_PATH = 'demo-session.zip';
 const DEMO_SCAN_PATH = 'demo-scan.glb';
+const DEMO_SCAN_ALIGN_PATH = 'demo-scan-align.json';
 
 /** Resolve a demo asset path relative to Vite's base URL. */
 function assetUrl(rel: string): string {
@@ -62,6 +63,19 @@ export async function fetchDemoScan(): Promise<Blob | null> {
   try {
     const res = await fetch(assetUrl(DEMO_SCAN_PATH), { cache: 'default' });
     return res.ok ? await res.blob() : null;
+  } catch { return null; }
+}
+
+/** Fetch the shipped scan alignment (4×4 matrix + file signature), if any. */
+export async function fetchDemoScanAlign(): Promise<{ sig: string; matrix: number[] } | null> {
+  try {
+    const res = await fetch(assetUrl(DEMO_SCAN_ALIGN_PATH), { cache: 'default' });
+    if (!res.ok) return null;
+    const rec = await res.json();
+    if (typeof rec?.sig === 'string' && Array.isArray(rec?.matrix) && rec.matrix.length === 16) {
+      return rec;
+    }
+    return null;
   } catch { return null; }
 }
 

@@ -88,6 +88,10 @@
           <label class="tg on" style="flex:1"><input type="checkbox" id="scanVisible" checked> Show scan</label>
           <button class="b" id="scanClear">Unload</button>
         </div>
+        <div class="btns" style="margin-top:6px">
+          <button class="b" id="scanResetAlign" title="Wipe stored alignment and reset the scan to its provisional fit. Use this if your alignment picks went sideways.">Reset alignment</button>
+          <button class="b" id="scanExportAlign" disabled title="Save the current alignment as a demo-scan-align.json file — drop it into public/ so every visitor sees the aligned scan.">Save alignment for demo</button>
+        </div>
         <div class="err" id="scanStatus"></div>
       </div>
     </div>

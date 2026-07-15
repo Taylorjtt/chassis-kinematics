@@ -687,10 +687,42 @@ $('scanClear').addEventListener('click', () => {
   scan.clear();
   ($('scanAlign') as HTMLButtonElement).disabled = true;
   ($('scanMeasure') as HTMLButtonElement).disabled = true;
+  ($('scanExportAlign') as HTMLButtonElement).disabled = true;
   $('scanScaleRow').style.display = 'none';
   $('scanStatus').textContent = '';
   scene.render();
 });
+$('scanResetAlign').addEventListener('click', () => {
+  scan.resetAlignment();
+  scene.resetView();
+  $('scanStatus').style.color = 'var(--dim)';
+  $('scanStatus').textContent = scan.loaded
+    ? `alignment cleared — scan re-fit to view · click "Measure whole car" to re-align`
+    : 'alignment cleared';
+  scene.render();
+});
+$('scanExportAlign').addEventListener('click', () => {
+  const rec = scan.exportAlignment();
+  if (!rec) {
+    scanNote('align the scan first — Measure whole car or Re-align');
+    return;
+  }
+  const blob = new Blob([JSON.stringify(rec, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'demo-scan-align.json';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 150);
+  $('scanStatus').style.color = 'var(--good)';
+  $('scanStatus').textContent = 'alignment saved — place in public/demo-scan-align.json and redeploy';
+});
+/** Enable the "Save alignment for demo" button whenever the scan is aligned. */
+function syncExportAlignBtn(): void {
+  const btn = document.getElementById('scanExportAlign') as HTMLButtonElement | null;
+  if (btn) btn.disabled = !scan.aligned;
+}
+// Poll cheap flag on a timer — alignment happens across a few code paths.
+setInterval(syncExportAlignBtn, 500);
 
 /* ---------------- scan measurement recipes ---------------- */
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -1831,10 +1863,22 @@ update();
         try {
           const file = new File([demo.scanBlob], 'demo-scan.glb', { type: 'model/gltf-binary' });
           await scan.load(file);
+          // Demo scan is prep-baked to inches (see scripts/prep-scan.mjs).
+          // Force the units dropdown so alignment doesn't apply an mm→in
+          // conversion that shrinks the mesh by 25.4x.
+          const unitsSel = document.getElementById('scanUnits') as HTMLSelectElement | null;
+          if (unitsSel) unitsSel.value = 'in';
+          // Apply shipped alignment if we have one AND it matches this file.
+          let alignedFromShipped = false;
+          if (demo.scanAlign) {
+            alignedFromShipped = scan.applyExternalAlignment(demo.scanAlign);
+          }
           const statusEl = document.getElementById('scanStatus');
           if (statusEl) {
-            statusEl.style.color = 'var(--dim)';
-            statusEl.textContent = `scan loaded — ${scan.info} · click "Measure whole car" to align`;
+            statusEl.style.color = alignedFromShipped ? 'var(--good)' : 'var(--dim)';
+            statusEl.textContent = alignedFromShipped
+              ? `scan loaded ✓ aligned — ${scan.info}`
+              : `scan loaded — ${scan.info} · click "Measure whole car" to align`;
           }
           const measureBtn = document.getElementById('scanMeasure') as HTMLButtonElement | null;
           const alignBtn = document.getElementById('scanAlign') as HTMLButtonElement | null;
