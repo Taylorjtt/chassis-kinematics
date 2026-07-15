@@ -7,6 +7,13 @@
 <link rel="stylesheet" href="/src/style.css">
 </head>
 <body data-mode="build">
+<div id="splashOverlay">
+  <div class="splashInner">
+    <img src="clr-mark.png" alt="Closed Loop Racing" class="splashLogo">
+    <div class="splashTitle">SUSPENSION <b>BUILDER</b></div>
+    <div class="splashSub">Loading…</div>
+  </div>
+</div>
 <button class="drawerToggle" id="drawerToggle">☰ Controls</button>
 <div id="drawerBackdrop"></div>
 <div id="app">
@@ -140,8 +147,19 @@
   <div id="stage">
     <div id="scene"></div>
     <div class="badge">
-      <div class="t">CLR SUSPENSION <b>BUILDER</b></div>
-      <div class="s" id="sub">built from parts · alignment is solved, not typed</div>
+      <a href="https://closedloopracing.com/" target="_blank" rel="noopener" class="brandMark">
+        <img src="clr-mark.png" alt="Closed Loop Racing">
+      </a>
+      <div class="badgeText">
+        <div class="t">SUSPENSION <b>BUILDER</b></div>
+        <div class="s" id="sub">built from parts · alignment is solved, not typed</div>
+      </div>
+    </div>
+    <div id="playOverlay" class="playOverlay replayOnly" style="display:none">
+      <button id="playOverlayBtn" class="playOverlayBtn">
+        <span class="playIcon">▶</span>
+        <span class="playText"><span class="playTitle">Play demo lap</span><span class="playSub" id="playOverlaySub"></span></span>
+      </button>
     </div>
     <div id="hud">
       <h4>Static (at ride, sliders 0)</h4>

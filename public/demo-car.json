@@ -1,0 +1,314 @@
+{
+ "app": "clr-suspension-builder",
+ "version": 2,
+ "saved": "2026-07-12T00:57:28.491Z",
+ "front": {
+  "chassis": {
+   "kind": "chassis",
+   "id": "ch-1",
+   "name": "Chassis (imported v4)",
+   "wheelbase": 108,
+   "sides": {
+    "R": {
+     "lowerFront": [
+      3.094,
+      -9.392,
+      4.382
+     ],
+     "lowerRear": [
+      -12.273,
+      -12.963,
+      4.332
+     ],
+     "upperFront": [
+      4.066,
+      -14.507,
+      14.237
+     ],
+     "upperRear": [
+      -6.907,
+      -14.859,
+      13.302
+     ],
+     "springPocketUpper": [
+      -2,
+      -14,
+      24
+     ],
+     "shockMountUpper": [
+      -1.547,
+      -15.484,
+      21.858
+     ]
+    },
+    "L": {
+     "lowerFront": [
+      1.889,
+      9.392,
+      4.332
+     ],
+     "lowerRear": [
+      -9.904,
+      12.963,
+      4.382
+     ],
+     "upperFront": [
+      4.404,
+      14.889,
+      13.693
+     ],
+     "upperRear": [
+      -5.621,
+      14.75,
+      14.082
+     ],
+     "springPocketUpper": [
+      -2,
+      14,
+      24
+     ],
+     "shockMountUpper": [
+      -1.599,
+      18.628,
+      21.568
+     ]
+    }
+   },
+   "steeringBox": {
+    "pivot": [
+     12.953,
+     9.64,
+     6.356
+    ],
+    "pitmanEnd": [
+     7.09,
+     10.553,
+     6.483
+    ]
+   },
+   "idler": {
+    "pivot": [
+     13.438,
+     -11.98,
+     5.818
+    ],
+    "armEnd": [
+     7.208,
+     -11.138,
+     4.981
+    ]
+   }
+  },
+  "corners": {
+   "R": {
+    "lowerArm": {
+     "kind": "lowerArm",
+     "id": "la-7",
+     "name": "Lower arm L (imported)",
+     "length": 14.247,
+     "bjAxial": 6.916,
+     "bjDrop": 0.40000000000000036,
+     "springSeat": {
+      "axial": 10,
+      "radial": 12,
+      "drop": -0.5999999999999996
+     },
+     "shockSeat": {
+      "axial": 5.884,
+      "radial": 11.871,
+      "drop": -0.5999999999999996
+     }
+    },
+    "upperArm": {
+     "kind": "upperArm",
+     "id": "ua-8",
+     "name": "Upper arm L (imported)",
+     "legFront": {
+      "baseLength": 9.443,
+      "heimPitchTPI": 16
+     },
+     "legRear": {
+      "baseLength": 9.271,
+      "heimPitchTPI": 16
+     },
+     "bjDrop": 0
+    },
+    "spindle": {
+     "kind": "spindle",
+     "id": "sp-9",
+     "name": "Spindle L (imported)",
+     "height": 12.7,
+     "pin": null,
+     "steeringArm": {
+      "length": 2.1885,
+      "drop": -0.3185699460896445,
+      "sweepDeg": 7.457621835427588,
+      "side": "front"
+     },
+     "calibrated": {
+      "pinDir": [
+       -0.15618830334120146,
+       -0.027456441568028973,
+       0.9873456120912361
+      ],
+      "troLocal": [
+       2.935,
+       7.228,
+       -0.996
+      ],
+      "hubFaceLocal": [
+       3.959,
+       -0.057,
+       7.066
+      ]
+     }
+    },
+    "tieRod": {
+     "kind": "tieRod",
+     "id": "tr-a",
+     "name": "Tie rod L (imported)",
+     "baseLength": 12.344,
+     "sleevePitchTPI": 16,
+     "endsThreaded": 2
+    },
+    "wheel": {
+     "kind": "wheelTire",
+     "id": "wh-b",
+     "name": "Wheel/tire (imported)",
+     "radius": 11,
+     "width": 8,
+     "offsetToHubFace": 0
+    }
+   },
+   "L": {
+    "lowerArm": {
+     "kind": "lowerArm",
+     "id": "la-2",
+     "name": "Lower arm R (imported)",
+     "length": 14.098,
+     "bjAxial": 6.145,
+     "bjDrop": 0,
+     "springSeat": {
+      "axial": 10,
+      "radial": 12,
+      "drop": -0.5999999999999996
+     },
+     "shockSeat": {
+      "axial": 6.908,
+      "radial": 11.955,
+      "drop": -0.5999999999999996
+     }
+    },
+    "upperArm": {
+     "kind": "upperArm",
+     "id": "ua-3",
+     "name": "Upper arm R (imported)",
+     "legFront": {
+      "baseLength": 10.47,
+      "heimPitchTPI": 16
+     },
+     "legRear": {
+      "baseLength": 11.507,
+      "heimPitchTPI": 16
+     },
+     "bjDrop": 0
+    },
+    "spindle": {
+     "kind": "spindle",
+     "id": "sp-4",
+     "name": "Spindle R (imported)",
+     "height": 13.091,
+     "pin": null,
+     "steeringArm": {
+      "length": 5.688454376141944,
+      "drop": -0.3185699460896445,
+      "sweepDeg": 7.457621835427588,
+      "side": "front"
+     },
+     "calibrated": {
+      "pinDir": [
+       -0.15618830334120146,
+       -0.027456441568028973,
+       0.9873456120912361
+      ],
+      "troLocal": [
+       3.24,
+       7.057,
+       -0.543
+      ],
+      "hubFaceLocal": [
+       4.609,
+       -0.292,
+       7.36
+      ]
+     }
+    },
+    "tieRod": {
+     "kind": "tieRod",
+     "id": "tr-5",
+     "name": "Tie rod R (imported)",
+     "baseLength": 13.595,
+     "sleevePitchTPI": 16,
+     "endsThreaded": 2
+    },
+    "wheel": {
+     "kind": "wheelTire",
+     "id": "wh-6",
+     "name": "Wheel/tire (imported)",
+     "radius": 11,
+     "width": 8,
+     "offsetToHubFace": 0
+    }
+   }
+  }
+ },
+ "setup": {
+  "corners": {
+   "R": {
+    "heimTurnsFront": 0,
+    "heimTurnsRear": 0,
+    "tieRodTurns": 0,
+    "slugs": {
+     "uio": 0,
+     "uud": 0,
+     "ucs": 0,
+     "lio": 0,
+     "lud": 0
+    },
+    "rideTargetWCz": 11
+   },
+   "L": {
+    "heimTurnsFront": 0,
+    "heimTurnsRear": 0,
+    "tieRodTurns": 0,
+    "slugs": {
+     "uio": 0,
+     "uud": 0,
+     "ucs": 0,
+     "lio": 0,
+     "lud": 0
+    },
+    "rideTargetWCz": 11
+   }
+  },
+  "frameRaise": 0,
+  "toeGaugeDia": 22,
+  "measured": {
+   "R": {
+    "camberDeg": -1,
+    "toeIn": 0
+   },
+   "L": {
+    "camberDeg": -1,
+    "toeIn": 0
+   }
+  }
+ },
+ "ui": {
+  "mode": "wheel",
+  "lock": false,
+  "travL": 0,
+  "travR": -0.14,
+  "steer": 0
+ }
+}

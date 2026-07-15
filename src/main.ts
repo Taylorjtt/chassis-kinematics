@@ -27,6 +27,8 @@ import {
   renderReplayRail, tickReplayUI, wireReplayRail,
 } from './ui/telemetry/replayUI';
 import { Engine, createEngine } from './ui/telemetry/replayEngine';
+import { bootDemoMode, fetchFullBundleInBackground } from './ui/telemetry/demoBoot';
+import { hasDemoAssets } from './state/demoDefaults';
 import { armPickLengths } from './state/setup';
 import {
   AssemblyError, cornerDiagnostics, fitUpperLegsToSpindle, kingpinFrame, toKingpinLocal,
@@ -1211,6 +1213,8 @@ function setMode(m: 'build' | 'tune' | 'replay'): void {
   // charts pane may have been hidden — re-measure canvases now that they're visible.
   // Applies going into Tune (charts appear) and going into Replay (track map appears).
   scene.resize(); update();
+  // "Play demo lap" overlay visibility depends on the mode
+  if (typeof updatePlayOverlay === 'function') updatePlayOverlay();
 }
 function setSide(s: Side): void {
   uiState.side = s;
@@ -1236,7 +1240,22 @@ $('hpMirror').addEventListener('click', () => {
   setup.measured.L = mirror(setup.measured.R);
   rebuild(); rebuildEditor(); syncAdjInputs();
 });
+let demoAssetsShipped = false;
+hasDemoAssets().then((yes) => {
+  demoAssetsShipped = yes;
+  // Retitle the reset button if demo assets are available
+  const btn = document.getElementById('hpReset');
+  if (btn && yes) btn.textContent = 'Reset to CLR demo';
+});
 $('hpReset').addEventListener('click', () => {
+  if (demoAssetsShipped) {
+    // Reload with ?demo=1 so the demoBoot flow re-hydrates fresh state.
+    localStorage.removeItem(AUTOSAVE_KEY);
+    const u = new URL(location.href);
+    u.searchParams.set('demo', '1');
+    location.href = u.toString();
+    return;
+  }
   localStorage.removeItem(AUTOSAVE_KEY);
   ({ front, setup } = defaultState());
   rebuild(); rebuildEditor(); syncAdjInputs(); captureBaseline(); update();
@@ -1333,8 +1352,40 @@ const compareLapFrames: Map<number, LapFrames> = new Map();
 let currentMapping: SensorMapping = {};
 let replayEngine: Engine | null = null;
 
-function renderRail(): void { renderReplayRail($('replayRail'), $('replayBottomBar'), replayState, replayCallbacks); }
-function tickBar(): void { tickReplayUI($('replayBottomBar'), replayState); }
+function renderRail(): void {
+  renderReplayRail($('replayRail'), $('replayBottomBar'), replayState, replayCallbacks);
+  updatePlayOverlay();
+}
+function tickBar(): void {
+  tickReplayUI($('replayBottomBar'), replayState);
+  updatePlayOverlay();
+}
+
+/** Big "▶ Play demo lap" overlay in the stage — visible when the demo is
+ *  primed at t=0 and paused, hides once the visitor plays or scrubs. */
+function updatePlayOverlay(): void {
+  const overlay = document.getElementById('playOverlay');
+  if (!overlay) return;
+  const ready = uiState.mode === 'replay'
+    && replayState.primaryLap !== null
+    && !replayState.playing
+    && replayState.currentTSec < 0.05
+    && !!replayState.bundle;
+  overlay.style.display = ready ? '' : 'none';
+  if (ready && replayState.bundle) {
+    const lap = replayState.bundle.laps.find((l) => l.lapNumber === replayState.primaryLap);
+    const sub = document.getElementById('playOverlaySub');
+    if (sub && lap) {
+      const min = Math.floor(lap.lapTimeMs / 60000);
+      const sec = ((lap.lapTimeMs % 60000) / 1000).toFixed(3);
+      sub.textContent = `Lap ${lap.lapNumber} · ${min}:${sec.padStart(6, '0')}`;
+    }
+  }
+}
+document.getElementById('playOverlayBtn')?.addEventListener('click', () => {
+  replayCallbacks.onPlayPause();
+  updatePlayOverlay();
+});
 
 function loadPrimaryLap(lapNumber: number): void {
   if (!replayState.bundle) return;
@@ -1711,6 +1762,15 @@ syncAdjInputs();
 rebuild();
 captureBaseline();
 
+/** Fade the splash. Called at the end of boot OR after demo hydration
+ *  (whichever comes later — demo path re-calls this on completion). */
+function hideSplash(): void {
+  const el = document.getElementById('splashOverlay');
+  if (el) el.classList.add('gone');
+}
+// hide splash on the next frame so the first render lands before the fade
+requestAnimationFrame(() => requestAnimationFrame(hideSplash));
+
 // testing/sharing hook: apply adjustments from the URL after the baseline is
 // captured, e.g. ?hfR=6&lioL=0.4 (heim/slug key + side, value in turns/in)
 const qp = new URLSearchParams(location.search);
@@ -1728,4 +1788,74 @@ qp.forEach((val, key) => {
 });
 if (qpTouched) { syncAdjInputs(); rebuild(); }
 
+// ?mode=build|tune|replay — override the persisted mode when explicitly set.
+// Applies whether or not the demo boot is triggered.
+{
+  const modeParam = qp.get('mode');
+  if (modeParam === 'build' || modeParam === 'tune' || modeParam === 'replay') {
+    uiState.mode = modeParam;
+    saveUIState(uiState);
+    syncNavHighlights();
+  }
+}
+
 update();
+
+/* ---------------- demo-mode hydration ----------------
+ * If the visitor arrived with an empty localStorage (first visit) — or with
+ * an explicit ?demo=1 override — fetch the shipped demo assets and open the
+ * sim in Replay mode primed on the best lap. The main boot above has already
+ * finished, so the visitor sees the default state briefly, then the demo
+ * state hydrates.
+ *
+ * ?demo=0 opts out (respect autosave / v4 default).
+ * ?mode=build|tune|replay overrides the mode set by demo hydration.
+ * ?lap=N overrides the best-lap default. */
+{
+  const forceDemo = qp.get('demo') === '1';
+  const skipDemo = qp.get('demo') === '0';
+  const hasSavedState = !!localStorage.getItem(AUTOSAVE_KEY);
+  const shouldDemo = !skipDemo && (!hasSavedState || forceDemo);
+  if (shouldDemo) {
+    void (async () => {
+      const demo = await bootDemoMode();
+      if (demo.car) {
+        front = demo.car.front;
+        setup = demo.car.setup;
+        rebuild();
+        rebuildEditor();
+        syncAdjInputs();
+        captureBaseline();
+      }
+      if (demo.bundle && demo.bestLap !== null) {
+        // Enter Replay mode + hydrate through the existing callbacks so the
+        // rail / engine / charts / track map all wire up the normal way.
+        const modeParam = qp.get('mode');
+        const targetMode = modeParam === 'build' || modeParam === 'tune' || modeParam === 'replay'
+          ? modeParam : 'replay';
+        uiState.mode = targetMode as 'build' | 'tune' | 'replay';
+        saveUIState(uiState);
+        syncNavHighlights();
+        replayCallbacks.onBundle(demo.bundle);
+        const lapParam = qp.get('lap');
+        const lapNum = lapParam && Number.isFinite(+lapParam) ? +lapParam : demo.bestLap;
+        replayCallbacks.onLapClick(lapNum, false);
+        // Background-load the full session and swap in-place when ready.
+        fetchFullBundleInBackground().then((full) => {
+          if (!full || !replayState.bundle) return;
+          const outgoing = replayState.bundle;
+          replayState.bundle = full;
+          // Refetch primary lap frames from the full bundle so cross-lap
+          // ride-reference computations use the whole session going forward.
+          if (replayState.primaryLap !== null) {
+            primaryLapFrames = full.fetchLap(replayState.primaryLap, currentMapping);
+            computeLapChartData();
+            drawLapCharts(replayState.currentTSec);
+          }
+          renderRail();
+          try { outgoing.close(); } catch { /* ignore */ }
+        });
+      }
+    })();
+  }
+}

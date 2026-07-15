@@ -176,10 +176,43 @@ body[data-mode="replay"] #hud{width:210px;padding:9px 12px}
 /* ---------------- stage overlays ---------------- */
 #scene{position:absolute;inset:0}
 #stage canvas{display:block}
-.badge{position:absolute;top:14px;left:16px;z-index:5;pointer-events:none}
+.badge{position:absolute;top:14px;left:16px;z-index:5;display:flex;align-items:center;gap:10px}
+.badge .brandMark{flex:none;pointer-events:auto;display:inline-flex;align-items:center;
+  padding:4px 6px;border-radius:6px;transition:background .12s}
+.badge .brandMark:hover{background:rgba(255,106,31,.12)}
+.badge .brandMark img{height:28px;width:auto;display:block}
+.badge .badgeText{pointer-events:none}
 .badge .t{font-weight:700;letter-spacing:.04em;font-size:14px}
 .badge .t b{color:var(--accent)}
 .badge .s{font-size:11px;color:var(--dim);margin-top:2px;font-family:var(--mono)}
+
+/* ---------------- splash + play overlay ---------------- */
+#splashOverlay{position:fixed;inset:0;background:var(--bg);z-index:1000;
+  display:flex;align-items:center;justify-content:center;
+  transition:opacity .35s ease-out,visibility 0s .35s;opacity:1;visibility:visible}
+#splashOverlay.gone{opacity:0;visibility:hidden}
+.splashInner{display:flex;flex-direction:column;align-items:center;gap:16px}
+.splashLogo{width:min(320px,60vw);height:auto;filter:drop-shadow(0 4px 14px rgba(255,106,31,.15))}
+.splashTitle{font-family:var(--sans);font-size:16px;font-weight:700;letter-spacing:.14em;color:var(--dim)}
+.splashTitle b{color:var(--accent)}
+.splashSub{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.08em}
+.splashSub::after{content:'';display:inline-block;width:0;overflow:hidden;
+  animation:splashDots 1.4s steps(4,end) infinite}
+@keyframes splashDots{0%,100%{width:0}25%{width:.3em}50%{width:.6em}75%{width:.9em}}
+
+.playOverlay{position:absolute;inset:0;z-index:6;pointer-events:none;
+  display:flex;align-items:center;justify-content:center}
+.playOverlayBtn{pointer-events:auto;background:var(--accent);color:#0d1014;
+  border:none;border-radius:14px;padding:22px 34px;font-family:var(--sans);
+  cursor:pointer;display:flex;align-items:center;gap:16px;
+  box-shadow:0 12px 40px rgba(255,106,31,.35),0 0 0 6px rgba(255,106,31,.15);
+  transition:transform .12s,box-shadow .12s;font-weight:700}
+.playOverlayBtn:hover{transform:scale(1.03);box-shadow:0 14px 46px rgba(255,106,31,.5),0 0 0 8px rgba(255,106,31,.22)}
+.playOverlayBtn .playIcon{font-size:34px;line-height:1}
+.playOverlayBtn .playText{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.playOverlayBtn .playTitle{font-size:18px;letter-spacing:.03em}
+.playOverlayBtn .playSub{font-family:var(--mono);font-size:11px;font-weight:500;
+  color:rgba(13,16,20,.72);text-transform:uppercase;letter-spacing:.1em}
 #hud{position:absolute;top:14px;right:16px;z-index:5;width:262px;
   background:rgba(21,26,33,.85);backdrop-filter:blur(6px);
   border:1px solid var(--line);border-radius:10px;padding:12px 14px;max-height:calc(100% - 28px);overflow-y:auto}
