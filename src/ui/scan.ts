@@ -115,7 +115,7 @@ export class ScanManager {
         if (!mat?.map) {
           o.material = new THREE.MeshStandardMaterial({
             color: 0x8fa1b3, roughness: 0.9, metalness: 0.05,
-            side: THREE.DoubleSide, transparent: true, opacity: 0.85,
+            side: THREE.DoubleSide, transparent: true, opacity: 0.4,
           });
         } else {
           mat.transparent = true;
