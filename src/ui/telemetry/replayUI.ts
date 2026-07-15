@@ -11,7 +11,8 @@ import { currentRole, resolveMapping, saveInvert, saveRole } from './mapping';
 
 export interface ReplayUICallbacks {
   onBundle: (bundle: Bundle) => void;
-  onSelectLap: (lapNumber: number) => void;
+  /** shift=true → toggle in compareLaps; shift=false → set as primaryLap. */
+  onLapClick: (lapNumber: number, shift: boolean) => void;
   onPlayPause: () => void;
   onSeek: (tSec: number) => void;
   onSpeedChange: (mult: number) => void;
@@ -22,7 +23,10 @@ export interface ReplayUICallbacks {
 
 export interface ReplayUIState {
   bundle: Bundle | null;
-  selectedLap: number | null;
+  /** Primary lap — drives playback, 3D scene, marker, speed HUD. */
+  primaryLap: number | null;
+  /** Additional laps to overlay on the charts (max 2). */
+  compareLaps: number[];
   playing: boolean;
   currentTSec: number;
   lapDurationSec: number;
@@ -32,6 +36,9 @@ export interface ReplayUIState {
   /** Session-relative seconds where the user picked the ride reference. */
   rideRefPickSec: number | null;
 }
+
+/** Cap on how many laps can be compared at once (primary + this many overlays). */
+export const MAX_COMPARE_LAPS = 2;
 
 export function buildReplayRailHTML(): string {
   return `
@@ -61,29 +68,30 @@ export function buildReplayRailHTML(): string {
       <div class="mappingList" id="mappingList"></div>
     </div>
     <div class="grp replayLaps" id="replayLaps" style="display:none">
-      <h3>Laps</h3>
+      <h3>Laps <span class="lapHint">click = play · shift-click = compare</span></h3>
       <div class="lapList" id="lapList"></div>
-    </div>
-    <div class="grp replayPlay" id="replayPlay" style="display:none">
-      <h3>Playback</h3>
-      <div class="playRow">
-        <button class="b primary" id="playPause">▶ Play</button>
-        <select id="playSpeed" title="playback speed">
-          <option value="0.25">0.25×</option>
-          <option value="0.5">0.5×</option>
-          <option value="1" selected>1×</option>
-          <option value="2">2×</option>
-        </select>
-      </div>
-      <div class="scrubRow">
-        <input type="range" id="scrub" min="0" max="100" step="0.01" value="0">
-        <div class="scrubTime" id="scrubTime">0.000 / 0.000 s</div>
-      </div>
+      <div class="compareBadge" id="compareBadge"></div>
     </div>
   `;
 }
 
-export function wireReplayRail(host: HTMLElement, state: ReplayUIState, cbs: ReplayUICallbacks): void {
+/** The full-width playback bar that lives along the bottom of the viewport
+ *  in Replay mode — outside the main #app grid. */
+export function buildReplayBottomBarHTML(): string {
+  return `
+    <button class="b primary playBtn" id="playPause">▶ Play</button>
+    <select id="playSpeed" title="playback speed">
+      <option value="0.25">0.25×</option>
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+    </select>
+    <input type="range" id="scrub" min="0" max="100" step="0.01" value="0">
+    <div class="scrubTime" id="scrubTime">0.000 / 0.000 s</div>
+  `;
+}
+
+export function wireReplayRail(host: HTMLElement, bar: HTMLElement, state: ReplayUIState, cbs: ReplayUICallbacks): void {
   const drop = host.querySelector<HTMLDivElement>('#replayDrop')!;
   const fileInput = host.querySelector<HTMLInputElement>('#replayFile')!;
   drop.addEventListener('click', () => fileInput.click());
@@ -103,7 +111,7 @@ export function wireReplayRail(host: HTMLElement, state: ReplayUIState, cbs: Rep
   async function loadFile(file: File): Promise<void> {
     state.loadingMsg = `loading ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)…`;
     state.errorMsg = '';
-    renderReplayRail(host, state, cbs);
+    renderReplayRail(host, bar, state, cbs);
     try {
       const { loadBundle } = await import('./bundle');
       const bundle = await loadBundle(file);
@@ -114,14 +122,14 @@ export function wireReplayRail(host: HTMLElement, state: ReplayUIState, cbs: Rep
       state.errorMsg = `bundle failed: ${(err as Error).message}`;
       state.loadingMsg = '';
     }
-    renderReplayRail(host, state, cbs);
+    renderReplayRail(host, bar, state, cbs);
   }
 
-  const playBtn = host.querySelector<HTMLButtonElement>('#playPause')!;
+  const playBtn = bar.querySelector<HTMLButtonElement>('#playPause')!;
   playBtn.addEventListener('click', () => cbs.onPlayPause());
-  const spd = host.querySelector<HTMLSelectElement>('#playSpeed')!;
+  const spd = bar.querySelector<HTMLSelectElement>('#playSpeed')!;
   spd.addEventListener('change', () => cbs.onSpeedChange(parseFloat(spd.value)));
-  const scrub = host.querySelector<HTMLInputElement>('#scrub')!;
+  const scrub = bar.querySelector<HTMLInputElement>('#scrub')!;
   scrub.addEventListener('input', () => {
     // range value is 0..100 (a percentage); convert to seconds
     const pct = parseFloat(scrub.value) / 100;
@@ -143,7 +151,9 @@ export function wireReplayRail(host: HTMLElement, state: ReplayUIState, cbs: Rep
   });
 }
 
-export function renderReplayRail(host: HTMLElement, state: ReplayUIState, cbs: ReplayUICallbacks): void {
+export function renderReplayRail(
+  host: HTMLElement, bar: HTMLElement, state: ReplayUIState, cbs: ReplayUICallbacks,
+): void {
   const status = host.querySelector<HTMLDivElement>('#replayStatus')!;
   status.textContent = state.errorMsg || state.loadingMsg;
   status.style.color = state.errorMsg ? 'var(--bad)' : 'var(--dim)';
@@ -151,19 +161,19 @@ export function renderReplayRail(host: HTMLElement, state: ReplayUIState, cbs: R
   const sessionBox = host.querySelector<HTMLDivElement>('#replaySession')!;
   const mappingBox = host.querySelector<HTMLDivElement>('#replayMapping')!;
   const lapsBox = host.querySelector<HTMLDivElement>('#replayLaps')!;
-  const playBox = host.querySelector<HTMLDivElement>('#replayPlay')!;
 
   if (!state.bundle) {
     sessionBox.style.display = 'none';
     mappingBox.style.display = 'none';
     lapsBox.style.display = 'none';
-    playBox.style.display = 'none';
+    bar.style.visibility = 'hidden';
     return;
   }
   const b = state.bundle;
   sessionBox.style.display = '';
   mappingBox.style.display = '';
   lapsBox.style.display = '';
+  bar.style.visibility = state.primaryLap !== null ? '' : 'hidden';
 
   const summary = host.querySelector<HTMLDivElement>('#sessionSummary')!;
   const totalMin = (b.session.durationMs / 60000).toFixed(1);
@@ -214,7 +224,7 @@ export function renderReplayRail(host: HTMLElement, state: ReplayUIState, cbs: R
     sel.addEventListener('change', () => {
       saveRole(sel.dataset.mac!, sel.value as 'fl' | 'fr' | 'none');
       cbs.onMappingChange(resolveMapping(b.sensors));
-      renderReplayRail(host, state, cbs);   // re-render to refresh other selects (roles are unique)
+      renderReplayRail(host, bar, state, cbs);   // re-render to refresh other selects (roles are unique)
     });
   });
   mappingList.querySelectorAll<HTMLInputElement>('.mapInvertBox').forEach((cb) => {
@@ -227,25 +237,43 @@ export function renderReplayRail(host: HTMLElement, state: ReplayUIState, cbs: R
   const lapList = host.querySelector<HTMLDivElement>('#lapList')!;
   lapList.innerHTML = b.laps.map((l) => {
     const isBest = l.lapTimeMs === b.session.bestLapTimeMs && b.session.bestLapTimeMs > 0;
-    const sel = l.lapNumber === state.selectedLap ? ' on' : '';
-    return `<button class="lapBtn${sel}${isBest ? ' best' : ''}" data-lap="${l.lapNumber}">`
+    const isPrimary = l.lapNumber === state.primaryLap;
+    const compareIdx = state.compareLaps.indexOf(l.lapNumber);
+    const cls = isPrimary ? ' on' : compareIdx === 0 ? ' cmp cmp1' : compareIdx === 1 ? ' cmp cmp2' : '';
+    return `<button class="lapBtn${cls}${isBest ? ' best' : ''}" data-lap="${l.lapNumber}">`
       + `<span class="lapNum">L${l.lapNumber}</span>`
       + `<span class="lapT">${formatLapTime(l.lapTimeMs)}</span>`
       + (isBest ? '<span class="lapBadge">best</span>' : '')
       + `</button>`;
   }).join('');
   lapList.querySelectorAll<HTMLButtonElement>('.lapBtn').forEach((btn) => {
-    btn.addEventListener('click', () => cbs.onSelectLap(parseInt(btn.dataset.lap!, 10)));
+    btn.addEventListener('click', (e) => cbs.onLapClick(parseInt(btn.dataset.lap!, 10), e.shiftKey));
   });
 
-  // playback panel visibility follows lap selection
-  playBox.style.display = state.selectedLap !== null ? '' : 'none';
-  const playBtn = host.querySelector<HTMLButtonElement>('#playPause')!;
+  const compareBadge = host.querySelector<HTMLDivElement>('#compareBadge')!;
+  if (state.compareLaps.length === 0) {
+    compareBadge.textContent = '';
+    compareBadge.style.display = 'none';
+  } else {
+    compareBadge.style.display = '';
+    compareBadge.innerHTML = 'comparing: ' + state.compareLaps.map((n, i) =>
+      `<span class="cmpChip cmp${i + 1}">L${n} <button class="cmpClose" data-clearcmp="${n}">×</button></span>`,
+    ).join(' ');
+    compareBadge.querySelectorAll<HTMLButtonElement>('.cmpClose').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        cbs.onLapClick(parseInt(btn.dataset.clearcmp!, 10), true);   // shift-click toggles off
+      });
+    });
+  }
+
+  // playback bar (bottom bar) — visibility follows primary lap selection
+  const playBtn = bar.querySelector<HTMLButtonElement>('#playPause')!;
   playBtn.textContent = state.playing ? '⏸ Pause' : '▶ Play';
-  const scrub = host.querySelector<HTMLInputElement>('#scrub')!;
+  const scrub = bar.querySelector<HTMLInputElement>('#scrub')!;
   const pct = state.lapDurationSec > 0 ? (state.currentTSec / state.lapDurationSec) * 100 : 0;
   if (document.activeElement !== scrub) scrub.value = String(pct);
-  const scrubTime = host.querySelector<HTMLDivElement>('#scrubTime')!;
+  const scrubTime = bar.querySelector<HTMLDivElement>('#scrubTime')!;
   scrubTime.textContent = `${state.currentTSec.toFixed(3)} / ${state.lapDurationSec.toFixed(3)} s`;
 }
 
@@ -315,10 +343,10 @@ function drawSessionSpeed(host: HTMLElement, state: ReplayUIState): void {
 
 /** Just update the play/scrub/time widgets during RAF ticks — full render is
  *  overkill for 60fps updates. Called from the replay engine. */
-export function tickReplayUI(host: HTMLElement, state: ReplayUIState): void {
-  const scrub = host.querySelector<HTMLInputElement>('#scrub');
-  const scrubTime = host.querySelector<HTMLDivElement>('#scrubTime');
-  const playBtn = host.querySelector<HTMLButtonElement>('#playPause');
+export function tickReplayUI(bar: HTMLElement, state: ReplayUIState): void {
+  const scrub = bar.querySelector<HTMLInputElement>('#scrub');
+  const scrubTime = bar.querySelector<HTMLDivElement>('#scrubTime');
+  const playBtn = bar.querySelector<HTMLButtonElement>('#playPause');
   if (!scrub || !scrubTime || !playBtn) return;
   const pct = state.lapDurationSec > 0 ? (state.currentTSec / state.lapDurationSec) * 100 : 0;
   if (document.activeElement !== scrub) scrub.value = String(pct);

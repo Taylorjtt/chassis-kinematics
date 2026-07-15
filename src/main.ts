@@ -13,7 +13,7 @@ import { calibrateSpindle } from './core/calibrate';
 import { Vector2, Vector3 } from 'three';
 import { defaultState, loadStateJSON, serializeState } from './state/setup';
 import { Scene3D } from './ui/scene3d';
-import { chartMulti } from './ui/charts';
+import { ChartSeries, chartMulti } from './ui/charts';
 import { drawFrontView } from './ui/frontview';
 import {
   BJKind, PartId, PART_HAS_SIDE, PickRequest, getFrontPoint, getSolvedBJ, refreshBJFields,
@@ -23,7 +23,8 @@ import { UIState, defaultUIState, loadUIState, saveUIState } from './ui/uiState'
 import type { Bundle, LapFrames, SensorMapping } from './ui/telemetry/bundle';
 import { resolveMapping } from './ui/telemetry/mapping';
 import {
-  ReplayUIState, buildReplayRailHTML, renderReplayRail, tickReplayUI, wireReplayRail,
+  MAX_COMPARE_LAPS, ReplayUIState, buildReplayBottomBarHTML, buildReplayRailHTML,
+  renderReplayRail, tickReplayUI, wireReplayRail,
 } from './ui/telemetry/replayUI';
 import { Engine, createEngine } from './ui/telemetry/replayEngine';
 import { armPickLengths } from './state/setup';
@@ -154,6 +155,7 @@ function toggles() {
   return {
     construct: on('tConstruct'), trail: on('tTrail'), shock: on('tShock'),
     wire: on('tWire'), ghost: on('tGhost'), model: on('tModel'),
+    ground: on('tGround'),
   };
 }
 
@@ -511,7 +513,7 @@ window.addEventListener('keydown', (e) => {
   box.closest('.tg')!.classList.toggle('on', box.checked);
   update();
 });
-['tModel', 'tConstruct', 'tTrail', 'tShock', 'tWire', 'tFront', 'tGhost'].forEach((id) => {
+['tModel', 'tConstruct', 'tTrail', 'tShock', 'tWire', 'tFront', 'tGhost', 'tGround'].forEach((id) => {
   const el = $(id) as HTMLInputElement;
   el.addEventListener('change', () => {
     el.closest('.tg')!.classList.toggle('on', el.checked);
@@ -1315,7 +1317,8 @@ $('drawerBackdrop').addEventListener('click', toggleDrawer);
 /* ---------------- replay mode wiring ---------------- */
 const replayState: ReplayUIState = {
   bundle: null,
-  selectedLap: null,
+  primaryLap: null,
+  compareLaps: [],
   playing: false,
   currentTSec: 0,
   lapDurationSec: 0,
@@ -1324,62 +1327,107 @@ const replayState: ReplayUIState = {
   errorMsg: '',
   rideRefPickSec: null,
 };
-let currentLapFrames: LapFrames | null = null;
+let primaryLapFrames: LapFrames | null = null;
+/** Compare-lap frames, keyed by lap number. Kept in sync with replayState.compareLaps. */
+const compareLapFrames: Map<number, LapFrames> = new Map();
 let currentMapping: SensorMapping = {};
 let replayEngine: Engine | null = null;
+
+function renderRail(): void { renderReplayRail($('replayRail'), $('replayBottomBar'), replayState, replayCallbacks); }
+function tickBar(): void { tickReplayUI($('replayBottomBar'), replayState); }
+
+function loadPrimaryLap(lapNumber: number): void {
+  if (!replayState.bundle) return;
+  try {
+    primaryLapFrames = replayState.bundle.fetchLap(lapNumber, currentMapping);
+    replayState.primaryLap = lapNumber;
+    replayState.currentTSec = 0;
+    replayState.lapDurationSec = primaryLapFrames.durationSec;
+    replayState.playing = false;
+    replayEngine?.destroy();
+    replayEngine = createEngine({
+      durationSec: primaryLapFrames.durationSec,
+      onTick: (t) => {
+        replayState.currentTSec = t;
+        applyFrameAt(t);
+        drawLapCharts(t);
+        tickBar();
+      },
+      onEnd: () => { replayState.playing = false; tickBar(); },
+    });
+    replayEngine.setSpeed(replayState.speedMult);
+    computeLapChartData();
+    renderRail();
+    applyFrameAt(0);
+    drawLapCharts(0);
+  } catch (err) {
+    replayState.errorMsg = `lap ${lapNumber} failed: ${(err as Error).message}`;
+    renderRail();
+  }
+}
+
+function toggleCompareLap(lapNumber: number): void {
+  if (!replayState.bundle) return;
+  const idx = replayState.compareLaps.indexOf(lapNumber);
+  if (idx >= 0) {
+    replayState.compareLaps.splice(idx, 1);
+    compareLapFrames.delete(lapNumber);
+  } else {
+    // don't allow the primary lap to also be a compare
+    if (lapNumber === replayState.primaryLap) return;
+    // enforce MAX_COMPARE_LAPS by dropping the oldest
+    if (replayState.compareLaps.length >= MAX_COMPARE_LAPS) {
+      const dropped = replayState.compareLaps.shift();
+      if (dropped !== undefined) compareLapFrames.delete(dropped);
+    }
+    replayState.compareLaps.push(lapNumber);
+    try {
+      compareLapFrames.set(lapNumber, replayState.bundle.fetchLap(lapNumber, currentMapping));
+    } catch {
+      replayState.compareLaps.pop();
+    }
+  }
+  computeLapChartData();
+  drawLapCharts(replayState.currentTSec);
+  renderRail();
+}
+
+function refetchAllLaps(): void {
+  if (!replayState.bundle) return;
+  if (replayState.primaryLap !== null) {
+    primaryLapFrames = replayState.bundle.fetchLap(replayState.primaryLap, currentMapping);
+  }
+  for (const n of replayState.compareLaps) {
+    compareLapFrames.set(n, replayState.bundle.fetchLap(n, currentMapping));
+  }
+}
+
 const replayCallbacks = {
   onBundle: (bundle: Bundle) => {
     replayState.bundle = bundle;
     currentMapping = resolveMapping(bundle.sensors);
-    replayState.selectedLap = null;
-    currentLapFrames = null;
+    replayState.primaryLap = null;
+    replayState.compareLaps = [];
+    primaryLapFrames = null;
+    compareLapFrames.clear();
     replayEngine?.destroy();
     replayEngine = null;
-    renderReplayRail($('replayRail'), replayState, replayCallbacks);
+    renderRail();
   },
-  onSelectLap: (lapNumber: number) => {
-    if (!replayState.bundle) return;
-    replayState.selectedLap = lapNumber;
-    try {
-      currentLapFrames = replayState.bundle.fetchLap(lapNumber, currentMapping);
-      replayState.currentTSec = 0;
-      replayState.lapDurationSec = currentLapFrames.durationSec;
-      replayState.playing = false;
-      // create the engine with the new lap's duration
-      replayEngine?.destroy();
-      replayEngine = createEngine({
-        durationSec: currentLapFrames.durationSec,
-        onTick: (t) => {
-          replayState.currentTSec = t;
-          applyFrameAt(t);
-          drawLapCharts(t);
-          tickReplayUI($('replayRail'), replayState);
-        },
-        onEnd: () => {
-          replayState.playing = false;
-          tickReplayUI($('replayRail'), replayState);
-        },
-      });
-      replayEngine.setSpeed(replayState.speedMult);
-      computeLapChartData();
-      renderReplayRail($('replayRail'), replayState, replayCallbacks);
-      applyFrameAt(0);
-      drawLapCharts(0);
-    } catch (err) {
-      replayState.errorMsg = `lap ${lapNumber} failed: ${(err as Error).message}`;
-      renderReplayRail($('replayRail'), replayState, replayCallbacks);
-    }
+  onLapClick: (lapNumber: number, shift: boolean) => {
+    if (shift) toggleCompareLap(lapNumber);
+    else loadPrimaryLap(lapNumber);
   },
   onPlayPause: () => {
     if (!replayEngine) return;
     replayEngine.toggle();
     replayState.playing = replayEngine.isPlaying();
-    tickReplayUI($('replayRail'), replayState);
+    tickBar();
   },
   onSeek: (tSec: number) => {
     replayState.currentTSec = tSec;
     if (replayEngine) replayEngine.seek(tSec);
-    else { applyFrameAt(tSec); tickReplayUI($('replayRail'), replayState); }
+    else { applyFrameAt(tSec); tickBar(); }
     drawLapCharts(tSec);
   },
   onSpeedChange: (m: number) => {
@@ -1388,48 +1436,46 @@ const replayCallbacks = {
   },
   onMappingChange: (m: SensorMapping) => {
     currentMapping = m;
-    if (replayState.bundle && replayState.selectedLap !== null) {
-      currentLapFrames = replayState.bundle.fetchLap(replayState.selectedLap, currentMapping);
-      computeLapChartData();
-      applyFrameAt(replayState.currentTSec);
-      drawLapCharts(replayState.currentTSec);
-    }
+    refetchAllLaps();
+    computeLapChartData();
+    if (replayState.primaryLap !== null) applyFrameAt(replayState.currentTSec);
+    drawLapCharts(replayState.currentTSec);
   },
   onPickRideRef: (sessionSec: number) => {
     if (!replayState.bundle) return;
-    // ±2 s window around the click
     replayState.bundle.setRideRefFromWindow(sessionSec, 2);
     replayState.rideRefPickSec = sessionSec;
-    // re-fetch the current lap so shocks are in the new reference frame
-    if (replayState.selectedLap !== null) {
-      currentLapFrames = replayState.bundle.fetchLap(replayState.selectedLap, currentMapping);
-      computeLapChartData();
-      applyFrameAt(replayState.currentTSec);
-      drawLapCharts(replayState.currentTSec);
-    }
-    renderReplayRail($('replayRail'), replayState, replayCallbacks);
+    refetchAllLaps();
+    computeLapChartData();
+    if (replayState.primaryLap !== null) applyFrameAt(replayState.currentTSec);
+    drawLapCharts(replayState.currentTSec);
+    renderRail();
   },
 };
 $('replayRail').innerHTML = buildReplayRailHTML();
-wireReplayRail($('replayRail'), replayState, replayCallbacks);
+$('replayBottomBar').innerHTML = buildReplayBottomBarHTML();
+wireReplayRail($('replayRail'), $('replayBottomBar'), replayState, replayCallbacks);
 
 /** Pre-computed lap-chart data — evenly-sampled solver output over the lap.
  *  Recomputed on lap select or mapping change; not on every tick (too slow). */
-interface LapChartData {
+interface LapChartFrames {
   tSec: number[];
   cambL: number[]; cambR: number[];
   toeLin: number[]; toeRin: number[];
   shockL: number[]; shockR: number[];
   speedMph: number[];
 }
-let lapChartData: LapChartData | null = null;
+interface LapChartData {
+  primary: LapChartFrames | null;
+  compares: Array<{ lapNumber: number; frames: LapChartFrames }>;
+}
+let lapChartData: LapChartData = { primary: null, compares: [] };
 const LAP_CHART_SAMPLES = 200;
 
-function computeLapChartData(): void {
-  lapChartData = null;
-  if (!currentLapFrames || !fa) return;
+/** Compute one lap's evenly-sampled solver output. Runs solveFrontState 200
+ *  times per call — fast (~5–15 ms for one lap on modern hardware). */
+function resampleLap(frames: LapFrames): LapChartFrames {
   const gd = setup.toeGaugeDia;
-  const frames = currentLapFrames;
   const dur = frames.durationSec;
   const tSec: number[] = new Array(LAP_CHART_SAMPLES);
   const cambL: number[] = new Array(LAP_CHART_SAMPLES);
@@ -1439,7 +1485,7 @@ function computeLapChartData(): void {
   const sL: number[] = new Array(LAP_CHART_SAMPLES);
   const sR: number[] = new Array(LAP_CHART_SAMPLES);
   const spdArr: number[] = new Array(LAP_CHART_SAMPLES);
-  const lerp = (a: Float32Array, i0: number, i1: number, f: number): number => {
+  const lerpAt = (a: Float32Array, i0: number, i1: number, f: number): number => {
     const v0 = a[i0], v1 = a[i1];
     if (!isFinite(v0)) return isFinite(v1) ? v1 : 0;
     if (!isFinite(v1)) return v0;
@@ -1452,11 +1498,11 @@ function computeLapChartData(): void {
     const i0 = Math.max(0, idx), i1 = Math.min(frames.tSec.length - 1, idx + 1);
     const t0 = frames.tSec[i0], t1 = frames.tSec[i1];
     const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
-    const travL = lerp(frames.shockL, i0, i1, f);
-    const travR = lerp(frames.shockR, i0, i1, f);
+    const travL = lerpAt(frames.shockL, i0, i1, f);
+    const travR = lerpAt(frames.shockR, i0, i1, f);
     sL[i] = travL; sR[i] = travR;
     try {
-      const s = solveFrontState(fa, front.chassis.wheelbase, {
+      const s = solveFrontState(fa!, front.chassis.wheelbase, {
         travL, travR, steerDeg: 0, mode: 'shock',
       });
       cambL[i] = s.cL.camber; cambR[i] = s.cR.camber;
@@ -1464,50 +1510,88 @@ function computeLapChartData(): void {
     } catch {
       cambL[i] = NaN; cambR[i] = NaN; toeLin[i] = NaN; toeRin[i] = NaN;
     }
-    spdArr[i] = lerp(frames.speedMph, i0, i1, f);
+    spdArr[i] = lerpAt(frames.speedMph, i0, i1, f);
   }
-  lapChartData = { tSec, cambL, cambR, toeLin, toeRin, shockL: sL, shockR: sR, speedMph: spdArr };
+  return { tSec, cambL, cambR, toeLin, toeRin, shockL: sL, shockR: sR, speedMph: spdArr };
 }
 
+function computeLapChartData(): void {
+  lapChartData = { primary: null, compares: [] };
+  if (!fa) return;
+  if (primaryLapFrames) lapChartData.primary = resampleLap(primaryLapFrames);
+  for (const n of replayState.compareLaps) {
+    const cf = compareLapFrames.get(n);
+    if (cf) lapChartData.compares.push({ lapNumber: n, frames: resampleLap(cf) });
+  }
+}
+
+/** Colors for compare-lap slots (matches .cmp1 / .cmp2 CSS). */
+const CMP_COLORS = ['#36c2ff', '#ffd23f'];
+
 function drawLapCharts(currentTSec: number): void {
-  if (!lapChartData) return;
   const d = lapChartData;
   const CY = '#36c2ff', OR = '#ff6a1f';
-  chartMulti(document.getElementById('rchCamb') as HTMLCanvasElement, d.tSec, [
-    { ys: d.cambL, color: CY, markerX: currentTSec },
-    { ys: d.cambR, color: OR, markerX: currentTSec },
-  ]);
-  chartMulti(document.getElementById('rchToe') as HTMLCanvasElement, d.tSec, [
-    { ys: d.toeLin, color: CY, markerX: currentTSec },
-    { ys: d.toeRin, color: OR, markerX: currentTSec },
-  ]);
-  chartMulti(document.getElementById('rchShock') as HTMLCanvasElement, d.tSec, [
-    { ys: d.shockL, color: CY, markerX: currentTSec },
-    { ys: d.shockR, color: OR, markerX: currentTSec },
-  ]);
-  chartMulti(document.getElementById('rchSpeed') as HTMLCanvasElement, d.tSec, [
-    { ys: d.speedMph, color: '#ffd23f', markerX: currentTSec },
-  ]);
-  const fmtRC = (a: number[]) => {
+  const DASH: [number, number] = [5, 4];
+
+  // Each L/R chart: compares as dashed slot-colored (both L+R), then primary
+  // as solid L (cyan) + R (orange) with a marker.
+  const buildLR = (
+    pick: (f: LapChartFrames) => { L: number[]; R: number[] },
+  ): { xs: number[]; series: ChartSeries[] } => {
+    const series: ChartSeries[] = [];
+    // compares: dashed slot-colored (single trace per lap — pick L for the
+    // dashed overlay; R would be too busy in 4-chart layout)
+    d.compares.forEach((c, i) => {
+      const p = pick(c.frames);
+      series.push({ ys: p.L, color: CMP_COLORS[i % CMP_COLORS.length], dash: DASH, width: 1.3 });
+      series.push({ ys: p.R, color: CMP_COLORS[i % CMP_COLORS.length], dash: DASH, width: 1.3 });
+    });
+    if (d.primary) {
+      const p = pick(d.primary);
+      series.push({ ys: p.L, color: CY, markerX: currentTSec });
+      series.push({ ys: p.R, color: OR, markerX: currentTSec });
+    }
+    return { xs: d.primary?.tSec ?? (d.compares[0]?.frames.tSec ?? []), series };
+  };
+  const camb = buildLR((f) => ({ L: f.cambL, R: f.cambR }));
+  const toe = buildLR((f) => ({ L: f.toeLin, R: f.toeRin }));
+  const sh = buildLR((f) => ({ L: f.shockL, R: f.shockR }));
+  chartMulti(document.getElementById('rchCamb') as HTMLCanvasElement, camb.xs, camb.series);
+  chartMulti(document.getElementById('rchToe') as HTMLCanvasElement, toe.xs, toe.series);
+  chartMulti(document.getElementById('rchShock') as HTMLCanvasElement, sh.xs, sh.series);
+
+  const spdSeries: ChartSeries[] = [];
+  d.compares.forEach((c, i) => {
+    spdSeries.push({ ys: c.frames.speedMph, color: CMP_COLORS[i % CMP_COLORS.length], dash: DASH, width: 1.3 });
+  });
+  if (d.primary) spdSeries.push({ ys: d.primary.speedMph, color: '#ffd23f', markerX: currentTSec });
+  const spdXs = d.primary?.tSec ?? (d.compares[0]?.frames.tSec ?? []);
+  chartMulti(document.getElementById('rchSpeed') as HTMLCanvasElement, spdXs, spdSeries);
+
+  // Header readouts — from the PRIMARY lap only (single-value display).
+  const p = d.primary;
+  const fmtRC = (a: number[]): number => {
+    if (!p) return NaN;
     const i = Math.max(0, Math.min(a.length - 1,
-      Math.round((currentTSec / (d.tSec[d.tSec.length - 1] || 1)) * (a.length - 1))));
+      Math.round((currentTSec / (p.tSec[p.tSec.length - 1] || 1)) * (a.length - 1))));
     return a[i];
   };
   const nb = (id: string, v: number, digits: number, unit: string) => {
-    const el = document.getElementById(id); if (el) el.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(digits)}${unit}`;
+    const el = document.getElementById(id);
+    if (el) el.textContent = isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(digits)}${unit}` : '—';
   };
-  nb('rCamb', fmtRC(d.cambL), 2, '°');
-  nb('rToe', fmtRC(d.toeLin), 3, '"');
-  nb('rShock', fmtRC(d.shockL), 3, '"');
-  nb('rSpd', fmtRC(d.speedMph), 0, ' mph');
+  nb('rCamb', p ? fmtRC(p.cambL) : NaN, 2, '°');
+  nb('rToe', p ? fmtRC(p.toeLin) : NaN, 3, '"');
+  nb('rShock', p ? fmtRC(p.shockL) : NaN, 3, '"');
+  nb('rSpd', p ? fmtRC(p.speedMph) : NaN, 0, ' mph');
 }
 
 /** Apply a single frame of telemetry to the sim: interpolate shock arrays
  *  at tSec and drive `solveFrontState({ mode: 'shock', ... })`. M4 will call
  *  this from the RAF loop; for now it's used on scrub + lap-select. */
 function applyFrameAt(tSec: number): void {
-  if (!currentLapFrames || !fa) return;
-  const { tSec: ts, shockL, shockR, speedMph, lat, lon } = currentLapFrames;
+  if (!primaryLapFrames || !fa) return;
+  const { tSec: ts, shockL, shockR, speedMph, lat, lon } = primaryLapFrames;
   const idx = binarySearchLE(ts, tSec);
   const i0 = Math.max(0, idx), i1 = Math.min(ts.length - 1, idx + 1);
   const t0 = ts[i0], t1 = ts[i1];
@@ -1547,23 +1631,33 @@ function findLastFinite(arr: Float32Array, endIdx: number): number {
   return NaN;
 }
 
-/** Stub — M5 fleshes this out. Right now just clears/paints a scan-map. */
-function updateTrackMap(lat: Float32Array, lon: Float32Array, speedMph: Float32Array, curIdx: number): void {
+/** Draw the primary lap's GPS trace + any compare laps overlaid, with a
+ *  bright orange dot at the primary lap's current playback position. Compare
+ *  traces use their slot colors (cyan / gold) at half-alpha so the primary
+ *  reads clearly. */
+function updateTrackMap(lat: Float32Array, lon: Float32Array, _speedMph: Float32Array, curIdx: number): void {
   const canvas = document.getElementById('trackMapCanvas') as HTMLCanvasElement | null;
-  if (!canvas || !currentLapFrames) return;
+  if (!canvas || !primaryLapFrames) return;
   const dpr = Math.min(devicePixelRatio, 2);
   const w = canvas.clientWidth, h = canvas.clientHeight;
   canvas.width = w * dpr; canvas.height = h * dpr;
   const g = canvas.getContext('2d')!;
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
-  // find lat/lon range, ignore NaN
+  // Bounding box across primary + all compare laps so every trace fits
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-  for (let i = 0; i < lat.length; i++) {
-    if (isFinite(lat[i]) && isFinite(lon[i])) {
-      if (lat[i] < minLat) minLat = lat[i]; if (lat[i] > maxLat) maxLat = lat[i];
-      if (lon[i] < minLon) minLon = lon[i]; if (lon[i] > maxLon) maxLon = lon[i];
+  const includeArr = (la: Float32Array, lo: Float32Array) => {
+    for (let i = 0; i < la.length; i++) {
+      if (isFinite(la[i]) && isFinite(lo[i])) {
+        if (la[i] < minLat) minLat = la[i]; if (la[i] > maxLat) maxLat = la[i];
+        if (lo[i] < minLon) minLon = lo[i]; if (lo[i] > maxLon) maxLon = lo[i];
+      }
     }
+  };
+  includeArr(lat, lon);
+  for (const n of replayState.compareLaps) {
+    const cf = compareLapFrames.get(n);
+    if (cf) includeArr(cf.lat, cf.lon);
   }
   if (!isFinite(minLat) || minLat === maxLat) return;
   const pad = 8;
@@ -1571,19 +1665,32 @@ function updateTrackMap(lat: Float32Array, lon: Float32Array, speedMph: Float32A
   const scale = Math.min((w - 2 * pad) / rngLon, (h - 2 * pad) / rngLat);
   const cx = (w - rngLon * scale) / 2 - minLon * scale;
   const cy = (h - rngLat * scale) / 2 + maxLat * scale;
-  const X = (lo: number) => cx + lo * scale;
-  const Y = (la: number) => cy - la * scale;
-  // polyline of the whole lap
-  g.strokeStyle = '#6b7787'; g.lineWidth = 1.5;
-  g.beginPath();
-  let started = false;
-  for (let i = 0; i < lat.length; i++) {
-    if (!isFinite(lat[i])) continue;
-    const px = X(lon[i]), py = Y(lat[i]);
-    if (!started) { g.moveTo(px, py); started = true; } else g.lineTo(px, py);
-  }
-  g.stroke();
-  // current position dot
+  const X = (lonV: number) => cx + lonV * scale;
+  const Y = (latV: number) => cy - latV * scale;
+
+  const drawTrace = (la: Float32Array, lo: Float32Array, color: string, width: number, dashed: boolean) => {
+    g.strokeStyle = color; g.lineWidth = width;
+    g.setLineDash(dashed ? [5, 4] : []);
+    g.beginPath();
+    let started = false;
+    for (let i = 0; i < la.length; i++) {
+      if (!isFinite(la[i])) continue;
+      const px = X(lo[i]), py = Y(la[i]);
+      if (!started) { g.moveTo(px, py); started = true; } else g.lineTo(px, py);
+    }
+    g.stroke();
+    g.setLineDash([]);
+  };
+
+  // compare traces first so they sit behind the primary
+  replayState.compareLaps.forEach((n, i) => {
+    const cf = compareLapFrames.get(n);
+    if (!cf) return;
+    const color = i === 0 ? 'rgba(54,194,255,.55)' : 'rgba(255,210,63,.55)';
+    drawTrace(cf.lat, cf.lon, color, 1.2, true);
+  });
+  drawTrace(lat, lon, '#7a8595', 1.5, false);
+  // current-position dot (primary lap only)
   const li = findLastFiniteIdx(lat, curIdx);
   if (li >= 0) {
     g.fillStyle = '#ff6a1f';
@@ -1591,7 +1698,8 @@ function updateTrackMap(lat: Float32Array, lon: Float32Array, speedMph: Float32A
     g.strokeStyle = '#0d1014'; g.lineWidth = 1.5; g.stroke();
   }
   const title = document.getElementById('trackMapTitle');
-  if (title) title.textContent = `TRACK — lap ${replayState.selectedLap ?? '?'}`;
+  const suffix = replayState.compareLaps.length ? ` (+${replayState.compareLaps.length} compare)` : '';
+  if (title) title.textContent = `TRACK — lap ${replayState.primaryLap ?? '?'}${suffix}`;
 }
 function findLastFiniteIdx(arr: Float32Array, endIdx: number): number {
   for (let i = endIdx; i >= 0; i--) if (isFinite(arr[i])) return i;

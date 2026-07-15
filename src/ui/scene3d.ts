@@ -25,6 +25,10 @@ const COL = {
 export interface DisplayToggles {
   construct: boolean; trail: boolean; shock: boolean; wire: boolean; ghost: boolean;
   model: boolean;   // hide the whole sim model to pick scan points behind it
+  /** ground-follower: shift+roll the sim so the wheels stay on z=0 as the
+   *  suspension articulates (matches how a real car looks). Off = today's
+   *  chassis-fixed frame where the wheel visibly lifts/clips as it moves. */
+  ground: boolean;
 }
 
 interface WheelGroup extends THREE.Group {
@@ -44,6 +48,10 @@ interface SideVis {
 
 export class Scene3D {
   private scene = new THREE.Scene();
+  /** Wraps everything sim-related — receives the per-frame ground-follower
+   *  transform (shift + roll) so tires stay planted on z=0 as the suspension
+   *  articulates. Reset to identity when the user turns the toggle off. */
+  private groundFollower = new THREE.Group();
   /** everything belonging to the SIM MODEL (not the scan/grid/lights) */
   private simRoot = new THREE.Group();
   private camera: THREE.PerspectiveCamera;
@@ -79,7 +87,10 @@ export class Scene3D {
     fillL.position.set(-40, 40, 20); this.scene.add(fillL);
     const grid = new THREE.GridHelper(140, 28, 0x2a3340, 0x1a2027);
     grid.rotation.x = Math.PI / 2; this.scene.add(grid);
-    this.scene.add(this.simRoot);
+    // simRoot lives INSIDE groundFollower so a single group transform moves
+    // the whole car (arms, uprights, wheels, ghost, highlight, diag) at once.
+    this.groundFollower.add(this.simRoot);
+    this.scene.add(this.groundFollower);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = false;
@@ -138,7 +149,9 @@ export class Scene3D {
         );
         g.add(l);
       });
-      this.scene.add(g);
+      // add to simRoot so the ground-follower transform applies (highlight
+      // stays anchored to the geometry the user is editing).
+      this.simRoot.add(g);
       this.highlight = g;
     }
     this.highlight.visible = !!p;
@@ -159,7 +172,7 @@ export class Scene3D {
       (m.material as THREE.Material)?.dispose();
       this.diagGroup.remove(c);
     });
-    if (this.diagGroup.parent !== this.scene) this.scene.add(this.diagGroup);
+    if (this.diagGroup.parent !== this.simRoot) this.simRoot.add(this.diagGroup);
     if (!diags) return;
     const lineMat = () => new THREE.LineBasicMaterial({ color: 0xff5d6c });
     const dashMat = () => new THREE.LineDashedMaterial({ color: 0xff5d6c, dashSize: 1, gapSize: 0.7 });
@@ -412,10 +425,48 @@ export class Scene3D {
     this.setRod(v.shockBody, kLow, mid); this.setRod(v.shockShaft, mid, T(stat.shockUpper0));
   }
 
+  /**
+   * Ground-follower: the solver works in chassis-fixed coords (WC moves as
+   * the suspension articulates), which visually makes the tires float or
+   * clip through the ground. Real cars work the other way — tire stays
+   * planted, chassis moves. We compensate at RENDER TIME only:
+   *   err_L/R = current WC.z - wheel.radius  (how far the wheel is off z=0)
+   *   dz      = -(err_L + err_R) / 2         (mean → translation, fixes bump/droop)
+   *   roll    = atan2(resR - resL, Wy)       (residual → rotation about +x, fixes roll)
+   * Applied to `groundFollower` around a pivot on the ground line so the roll
+   * pivots realistically. Rotation R about +x through pivot P plus translate:
+   *   world_point = R * (local_point - P) + P + (0,0,dz)
+   * which decomposes into `position = P - R*P + (0,0,dz)`, `rotation = R`.
+   */
+  private applyGroundFollower(fa: FrontAssembly, m: FrontState, on: boolean): void {
+    if (!on) {
+      this.groundFollower.position.set(0, 0, 0);
+      this.groundFollower.rotation.set(0, 0, 0);
+      return;
+    }
+    const rL = fa.statL.wheel.radius, rR = fa.statR.wheel.radius;
+    const errL = m.cL.WC.z - rL, errR = m.cR.WC.z - rR;
+    const dz = -(errL + errR) / 2;
+    const resL = errL + dz;                       // post-shift residuals,
+    const resR = errR + dz;                       // equal-and-opposite
+    const Wy = m.cL.WC.y - m.cR.WC.y || 1;        // +y = LEFT (positive span)
+    const roll = Math.atan2(resR - resL, Wy);     // right-hand rule about +x
+    const pivotY = (m.cL.WC.y + m.cR.WC.y) / 2;   // pivot on the ground midline
+    const pivotZ = (rL + rR) / 2;
+    const cos = Math.cos(roll), sin = Math.sin(roll);
+    // R about +x: (x, y, z) → (x, y*cos - z*sin, y*sin + z*cos)
+    // For pivot P = (0, pivotY, pivotZ):
+    const rpy = pivotY * cos - pivotZ * sin;
+    const rpz = pivotY * sin + pivotZ * cos;
+    this.groundFollower.rotation.set(roll, 0, 0);
+    this.groundFollower.position.set(0, pivotY - rpy, pivotZ - rpz + dz);
+  }
+
   update(fa: FrontAssembly, m: FrontState, tg: DisplayToggles): void {
     this.simRoot.visible = tg.model;
     this.drawCorner(this.visR, fa.statR, m.cR);
     this.drawCorner(this.visL, fa.statL, m.cL);
+    this.applyGroundFollower(fa, m, tg.ground);
     for (const v of [this.visR, this.visL]) {
       (v.wheel._tire.material as THREE.MeshStandardMaterial).wireframe = tg.wire;
       (v.wheel._rim.material as THREE.MeshStandardMaterial).wireframe = tg.wire;
