@@ -56,7 +56,14 @@ function writeStore(s: StoredMapping): void {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch { /* full */ }
 }
 
-/** Layered mapping resolver: user's saved mapping wins over name auto-detection. */
+/** Layered mapping resolver: user's saved mapping wins over name auto-detection.
+ *
+ *  Invert defaults: shock potentiometers commonly read extension-positive
+ *  from the ADC (voltage rises as the shock extends). The sim wants
+ *  compression-positive, so we default `flInvert = frInvert = true` unless
+ *  the visitor has explicitly stored `false` for that MAC via the invert
+ *  checkbox. This matches the convention used across every session we've
+ *  seen in the CLR fleet. */
 export function resolveMapping(sensors: SensorMeta[]): SensorMapping {
   const auto = autoMapSensors(sensors);
   const store = readStore();
@@ -67,9 +74,11 @@ export function resolveMapping(sensors: SensorMeta[]): SensorMapping {
     if (role === 'fl') out.flMac = s.macAddress;
     if (role === 'fr') out.frMac = s.macAddress;
   }
-  // invert flags
-  if (out.flMac && store.invert[out.flMac]) out.flInvert = true;
-  if (out.frMac && store.invert[out.frMac]) out.frInvert = true;
+  // invert flags — default true for FL/FR unless an explicit false is stored
+  const inv = (mac: string | undefined): boolean =>
+    mac ? (mac in store.invert ? store.invert[mac] : true) : false;
+  out.flInvert = inv(out.flMac);
+  out.frInvert = inv(out.frMac);
   return out;
 }
 
@@ -88,10 +97,12 @@ export function saveRole(mac: string, role: 'fl' | 'fr' | 'none'): void {
   writeStore(s);
 }
 
-/** Save an invert flag for a sensor. */
+/** Save an invert flag for a sensor. Persists BOTH true and false explicitly
+ *  so `resolveMapping`'s "default to true" behavior can distinguish
+ *  "unset (use default)" from "user unticked to false". */
 export function saveInvert(mac: string, invert: boolean): void {
   const s = readStore();
-  if (invert) s.invert[mac] = true; else delete s.invert[mac];
+  s.invert[mac] = invert;
   writeStore(s);
 }
 
