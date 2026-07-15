@@ -10,6 +10,7 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
@@ -73,7 +74,10 @@ export class ScanManager {
     let obj: THREE.Object3D;
     let note = '';
     if (ext === 'glb' || ext === 'gltf') {
-      const gltf = await new GLTFLoader().parseAsync(buf, '');
+      // Meshopt-compressed GLBs (produced by gltfpack -cc) need this decoder
+      // wired in; harmless for uncompressed GLBs.
+      const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+      const gltf = await loader.parseAsync(buf, '');
       obj = gltf.scene;
     } else if (ext === 'obj') {
       obj = new OBJLoader().parse(new TextDecoder().decode(buf));

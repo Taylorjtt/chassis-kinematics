@@ -1827,6 +1827,24 @@ update();
         syncAdjInputs();
         captureBaseline();
       }
+      if (demo.scanBlob) {
+        try {
+          const file = new File([demo.scanBlob], 'demo-scan.glb', { type: 'model/gltf-binary' });
+          await scan.load(file);
+          const statusEl = document.getElementById('scanStatus');
+          if (statusEl) {
+            statusEl.style.color = 'var(--dim)';
+            statusEl.textContent = `scan loaded — ${scan.info} · click "Measure whole car" to align`;
+          }
+          const measureBtn = document.getElementById('scanMeasure') as HTMLButtonElement | null;
+          const alignBtn = document.getElementById('scanAlign') as HTMLButtonElement | null;
+          if (measureBtn) measureBtn.disabled = false;
+          if (alignBtn) alignBtn.disabled = false;
+          scene.render();
+        } catch (err) {
+          console.warn('demo scan failed to load:', err);
+        }
+      }
       if (demo.bundle && demo.bestLap !== null) {
         // Enter Replay mode + hydrate through the existing callbacks so the
         // rail / engine / charts / track map all wire up the normal way.

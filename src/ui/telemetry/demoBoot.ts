@@ -11,7 +11,9 @@
  */
 
 import type { FrontEnd, Setup } from '../../core/parts';
-import { fetchDemoCar, fetchDemoFullBundle, fetchDemoHeroBundle } from '../../state/demoDefaults';
+import {
+  fetchDemoCar, fetchDemoFullBundle, fetchDemoHeroBundle, fetchDemoScan,
+} from '../../state/demoDefaults';
 import { loadBundle } from './bundle';
 import type { Bundle } from './bundle';
 
@@ -19,16 +21,18 @@ export interface DemoBootResult {
   car: { front: FrontEnd; setup: Setup } | null;
   bundle: Bundle | null;
   bestLap: number | null;
+  /** Scan mesh blob — caller wraps as File and hands to ScanManager. */
+  scanBlob: Blob | null;
 }
 
-/** Fetch demo car + hero telemetry bundle in parallel; return the pieces
- *  main.ts needs to open Replay mode primed on the best lap. Any missing
- *  asset returns null in its slot — the caller handles graceful degradation.
- */
+/** Fetch demo car + hero telemetry bundle + scan mesh in parallel; return
+ *  the pieces main.ts needs to open Replay mode primed on the best lap.
+ *  Any missing asset returns null in its slot — caller degrades gracefully. */
 export async function bootDemoMode(): Promise<DemoBootResult> {
-  const [car, heroBlob] = await Promise.all([
+  const [car, heroBlob, scanBlob] = await Promise.all([
     fetchDemoCar(),
     fetchDemoHeroBundle(),
+    fetchDemoScan(),
   ]);
   let bundle: Bundle | null = null;
   let bestLap: number | null = null;
@@ -44,7 +48,7 @@ export async function bootDemoMode(): Promise<DemoBootResult> {
       console.warn('demo hero bundle failed to load:', err);
     }
   }
-  return { car, bundle, bestLap };
+  return { car, bundle, bestLap, scanBlob };
 }
 
 /** After the sim is live, fetch the full session bundle. Caller invokes on
