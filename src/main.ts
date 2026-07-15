@@ -1245,8 +1245,9 @@ function setMode(m: 'build' | 'tune' | 'replay'): void {
   // charts pane may have been hidden — re-measure canvases now that they're visible.
   // Applies going into Tune (charts appear) and going into Replay (track map appears).
   scene.resize(); update();
-  // "Play demo lap" overlay visibility depends on the mode
-  if (typeof updatePlayOverlay === 'function') updatePlayOverlay();
+  // "Play demo lap" overlay is a demo-landing affordance only — mode
+  // switches count as engagement and dismiss it.
+  if (typeof dismissPlayCTA === 'function') dismissPlayCTA();
 }
 function setSide(s: Side): void {
   uiState.side = s;
@@ -1393,12 +1394,22 @@ function tickBar(): void {
   updatePlayOverlay();
 }
 
-/** Big "▶ Play demo lap" overlay in the stage — visible when the demo is
- *  primed at t=0 and paused, hides once the visitor plays or scrubs. */
+/** Big "▶ Play demo lap" overlay in the stage — shown ONCE on the initial
+ *  demo landing. Any interaction (play, scrub, lap click, mode switch)
+ *  dismisses it permanently for the session so it doesn't keep popping up
+ *  every time the visitor picks a new lap to compare. */
+let playCtaArmed = false;
+function armPlayCTA(): void { playCtaArmed = true; updatePlayOverlay(); }
+function dismissPlayCTA(): void {
+  playCtaArmed = false;
+  const overlay = document.getElementById('playOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
 function updatePlayOverlay(): void {
   const overlay = document.getElementById('playOverlay');
   if (!overlay) return;
-  const ready = uiState.mode === 'replay'
+  const ready = playCtaArmed
+    && uiState.mode === 'replay'
     && replayState.primaryLap !== null
     && !replayState.playing
     && replayState.currentTSec < 0.05
@@ -1416,7 +1427,7 @@ function updatePlayOverlay(): void {
 }
 document.getElementById('playOverlayBtn')?.addEventListener('click', () => {
   replayCallbacks.onPlayPause();
-  updatePlayOverlay();
+  dismissPlayCTA();
 });
 
 function loadPrimaryLap(lapNumber: number): void {
@@ -1498,16 +1509,19 @@ const replayCallbacks = {
     renderRail();
   },
   onLapClick: (lapNumber: number, shift: boolean) => {
+    dismissPlayCTA();
     if (shift) toggleCompareLap(lapNumber);
     else loadPrimaryLap(lapNumber);
   },
   onPlayPause: () => {
+    dismissPlayCTA();
     if (!replayEngine) return;
     replayEngine.toggle();
     replayState.playing = replayEngine.isPlaying();
     tickBar();
   },
   onSeek: (tSec: number) => {
+    dismissPlayCTA();
     replayState.currentTSec = tSec;
     if (replayEngine) replayEngine.seek(tSec);
     else { applyFrameAt(tSec); tickBar(); }
@@ -1902,6 +1916,9 @@ update();
         const lapParam = qp.get('lap');
         const lapNum = lapParam && Number.isFinite(+lapParam) ? +lapParam : demo.bestLap;
         replayCallbacks.onLapClick(lapNum, false);
+        // Arm the "Play demo lap" overlay AFTER the initial lap load — any
+        // subsequent lap clicks or interactions will dismiss it.
+        armPlayCTA();
         // Background-load the full session and swap in-place when ready.
         fetchFullBundleInBackground().then((full) => {
           if (!full || !replayState.bundle) return;
